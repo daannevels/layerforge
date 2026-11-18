@@ -50,7 +50,7 @@ Phase 2 = a JUCE/VST3 port in C++, so the engine must stay portable. The full br
 - Launchers: `.bat` files are CRLF (enforced by `.gitattributes`); `.command` files carry the executable
   bit in git (`git update-index --chmod=+x`).
 - Workspace: `~/Layerforge` (override with `LAYERFORGE_HOME`).
-- CI: `.github/workflows/tests.yml` runs pytest + selftest on ubuntu, windows and macos.
+- CI: `.github/workflows/tests.yml` runs pytest + selftest on ubuntu and windows (no macOS runner available; Daan tests macOS by hand).
 
 ## Milestones
 - M1 Skeleton (layout, uv, launchers, CI, fixtures, selftest stub, "Layerforge works" page) — done, awaiting OK

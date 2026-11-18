@@ -9,12 +9,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # macOS is left out: GitHub never handed out a macOS runner for this repo.
+        # Daan tests the macOS launchers by hand instead.
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
-    # GitHub did not hand out a macOS runner for this repo (3 tries, "job was not acquired").
-    # Until it does, a missing macOS run must not turn the whole check red. Re-check this in M2.
-    continue-on-error: ${{ startsWith(matrix.os, 'macos') }}
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
