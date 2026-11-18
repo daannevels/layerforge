@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.DS_Store
+# Never commit audio (samples, renders). Golden test data uses raw .f64 files.
+*.wav
+*.aif
+*.aiff
+*.flac
+*.mp3
+!tests/golden/**
