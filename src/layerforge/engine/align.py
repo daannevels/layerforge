@@ -42,7 +42,7 @@ def best_align(a: np.ndarray, b: np.ndarray, max_lag: int, start: int, win: int,
     e0 = None
     best = (-1.0, 0, 1)
     for k, p in candidates(max_lag):
-        bw = _window_of_shift(b, k, start, stop)
+        bw = window_of_shift(b, k, start, stop)
         e = _energy(aw + p * bw)
         if (k, p) == (0, 1):
             e0 = e
@@ -57,7 +57,7 @@ def best_align(a: np.ndarray, b: np.ndarray, max_lag: int, start: int, win: int,
     return best[1], best[2], float(gain_db)
 
 
-def _window_of_shift(b: np.ndarray, k: int, start: int, stop: int) -> np.ndarray:
+def window_of_shift(b: np.ndarray, k: int, start: int, stop: int) -> np.ndarray:
     """shift(b, k)[start:stop] without shifting the whole array."""
     n = b.shape[-1]
     out = np.zeros(stop - start)
@@ -66,6 +66,24 @@ def _window_of_shift(b: np.ndarray, k: int, start: int, stop: int) -> np.ndarray
     if chi > clo:
         out[clo - lo:chi - lo] = b[clo:chi]
     return out
+
+
+def best_coherence_shift(a: np.ndarray, b: np.ndarray, max_lag: int, start: int, win: int,
+                         r_now: float) -> tuple[float, int, int]:
+    """Extra (lag, polarity) of `b` that maximises coherence_ratio(a, p * shift(b, k)) over the
+    window. Returns (best R, lag, polarity); (r_now, 0, 1) if nothing beats r_now."""
+    start = max(start, 0)
+    stop = min(start + win, a.shape[-1])
+    aw = a[start:stop]
+    ea = _energy(aw)
+    best = (r_now, 0, 1)
+    for k, p in candidates(max_lag):
+        bw = window_of_shift(b, k, start, stop)
+        den = ea + _energy(bw)
+        r = _energy(aw + p * bw) / den if den > 0 else 1.0
+        if r > best[0]:
+            best = (r, k, p)
+    return best
 
 
 def coherence_ratio(a: np.ndarray, b: np.ndarray, start: int, win: int) -> float:

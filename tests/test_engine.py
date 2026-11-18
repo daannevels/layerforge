@@ -157,7 +157,7 @@ def test_side_channel_mono_below_120(freq, limit):
 @pytest.mark.parametrize("sr", [44100, 48000])
 def test_post_chain(drive, sr):
     x = padded(make_kick(sr=sr), sr, 30)[None] * 0.7 + 0.01
-    y, start, end = post_chain(x, sr, drive)
+    y, start, end, _ = post_chain(x, sr, drive)
     assert np.all(np.isfinite(y))
     assert db(true_peak(y)) == pytest.approx(-0.3, abs=0.05)
     assert abs(y[0, 0]) < 1e-3
@@ -173,7 +173,7 @@ def test_tail_is_trimmed():
     sr = 48000
     x = padded(make_kick(dur=0.6, sr=sr), sr, 30)
     x = np.concatenate([x, np.zeros(sr)])[None]  # 1 s of silence after the kick
-    y, _, _ = post_chain(x, sr, 0.0)
+    y, _, _, _ = post_chain(x, sr, 0.0)
     assert y.shape[1] < x.shape[1] - sr // 2
 
 

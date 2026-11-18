@@ -54,6 +54,25 @@ CROSSOVER_R_MIN = 0.5          # ratio: crossover check acts when E(a+b)/(E(a)+E
 CROSSOVER_OCTAVES = 1.0        # octaves: width of the band-pass around a shared band edge
 RELAXED_MIN_HZ = 2000.0        # Hz: relaxed types skip per-band alignment in bands whose lower edge >= this
 
+# --- Section 6: variations ------------------------------------------------------
+POOL_FACTOR = 6                # candidates per requested variation (pool size P = 6 N)
+JITTER_STRENGTH = 0.25         # fraction: keep strengths x (1 + U(-1,1) * this * j)
+JITTER_BAND_EDGE = 0.15        # band edges x exp(U(-1,1) * this * j)
+BAND_EDGE_JITTER_PROB = 0.5    # probability: a candidate moves its band edges (else it reuses the cached base split)
+BAND_EDGE_MIN_RATIO = 1.5      # ratio: neighbouring band edges stay at least this far apart
+BAND_EDGE_MAX_FRACTION = 0.45  # fraction of the sample rate: highest allowed band edge
+JITTER_ZONE_EDGE = 0.20        # zone edges x exp(U(-1,1) * this * j)
+JITTER_ALIGN_MS = 0.5          # ms: extra per-band alignment offsets are U(-1,1) * this * j
+JITTER_TRIM_DB = 1.5           # dB: per-band trims are U(-1,1) * this * j
+JITTER_DRIVE_DB = 3.0          # dB: saturation drive + U(0,1) * this * j
+GATE_SILENCE_DBFS = -60.0      # dBFS: RMS of the first GATE_SILENCE_MS (before normalisation) must exceed this
+GATE_SILENCE_MS = 100.0        # ms
+GATE_LOW_END_HZ = 200.0        # Hz: low-end coherence is measured below this
+GATE_LOW_END_R_MIN = 0.5       # ratio: drop candidates whose low-end R is below this
+GATE_PEAK_OVER_BASE_DB = 12.0  # dB: drop candidates whose pre-normalisation peak exceeds the base by more
+FEATURE_WINDOW_MS = 150.0      # ms: spectral centroid window after the start
+DUPLICATE_TOL = 1e-9           # feature distance below which two candidates count as identical
+
 # --- Step 9: stereo -------------------------------------------------------------
 MONO_BELOW_HZ = 120.0          # Hz: the Side channel is high-passed here (output is mono below)
 MONO_FILTER_ORDER = 2          # Butterworth order of the Side high-pass (run forward-backward)
@@ -73,9 +92,9 @@ TRUE_PEAK_DBFS = -0.3          # dBFS: target true peak of the output
 
 # --- Oversampling FIR (saturation and true-peak) -------------------------------
 OVERSAMPLE = 4                 # factor
-FIR_HALF_TAPS = 64             # input-rate samples on each side of the kernel centre
-FIR_KAISER_BETA = 9.0          # Kaiser window parameter
-FIR_CUTOFF = 0.95              # fraction of the input-rate Nyquist frequency
+FIR_HALF_TAPS = 24             # input-rate samples on each side of the kernel centre (193 taps at 4x)
+FIR_KAISER_BETA = 8.0          # Kaiser window parameter (about 80 dB stop-band)
+FIR_CUTOFF = 0.90              # fraction of the input-rate Nyquist frequency
 
 # --- Output ---------------------------------------------------------------------
 OUTPUT_SUBTYPE = "PCM_24"      # WAV sample format

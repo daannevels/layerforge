@@ -15,11 +15,17 @@ from layerforge.engine.constants import (
 def raised_cosine_ramp(n: int, start: float, width: float) -> np.ndarray:
     """Rising ramp over sample indices: 0 for i <= start, 1 for i >= start + width,
     0.5 - 0.5 cos(pi (i - start) / width) in between. `start` and `width` may be fractional."""
-    i = np.arange(n, dtype=np.float64)
+    out = np.zeros(n)
     if width <= 0:
-        return (i >= start).astype(np.float64)
-    u = np.clip((i - start) / width, 0.0, 1.0)
-    return 0.5 - 0.5 * np.cos(np.pi * u)
+        out[min(max(int(np.ceil(start)), 0), n):] = 1.0
+        return out
+    lo = min(max(int(np.floor(start)) + 1, 0), n)        # first index with i > start
+    hi = min(max(int(np.ceil(start + width)), 0), n)     # first index with i >= start + width
+    out[hi:] = 1.0
+    if hi > lo:
+        i = np.arange(lo, hi, dtype=np.float64)
+        out[lo:hi] = 0.5 - 0.5 * np.cos(np.pi * ((i - start) / width))
+    return out
 
 
 def guard_window(n: int, onset: int, guard_len: int) -> np.ndarray:

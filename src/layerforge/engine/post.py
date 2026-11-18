@@ -109,8 +109,11 @@ def _tail_end(x: np.ndarray, sr: float, onset: int) -> int:
     return onset + int(starts[0])
 
 
-def post_chain(x: np.ndarray, sr: float, drive_db: float) -> tuple[np.ndarray, int, int]:
-    """Step 10. x: (channels, n). Returns (y, start, end) where y = processed x[:, start:end].
+def post_chain(x: np.ndarray, sr: float, drive_db: float,
+               fast_peak: bool = False) -> tuple[np.ndarray, int, int, float]:
+    """Step 10. x: (channels, n). Returns (y, start, end, gain) where y = processed x[:, start:end]
+    and gain is the final normalisation gain (linear). fast_peak normalises on the sample peak
+    (used only to judge pool candidates; real outputs always use the true peak).
 
     Order: subtract mean; saturation (4x oversampled); 10 Hz zero-phase high-pass; start at the
     zero crossing nearest to onset - 1 ms with a raised-cosine fade-in (<= 1 ms) ending at the
@@ -133,7 +136,7 @@ def post_chain(x: np.ndarray, sr: float, drive_db: float) -> tuple[np.ndarray, i
     fo = min(fo_max, n)
     i = np.arange(1, fo + 1)
     y[..., n - fo:] *= 0.5 + 0.5 * np.cos(np.pi * i / fo)
-    tp = true_peak(y)
-    if tp > 0:
-        y *= 10 ** (C.TRUE_PEAK_DBFS / 20.0) / tp
-    return y, start, start + n
+    tp = float(np.max(np.abs(y))) if fast_peak else true_peak(y)
+    gain = 10 ** (C.TRUE_PEAK_DBFS / 20.0) / tp if tp > 0 else 1.0
+    y *= gain
+    return y, start, start + n, float(gain)
