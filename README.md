@@ -5,8 +5,8 @@ Layerforge maakt **nieuwe drum one-shots** uit 2 tot 4 van je eigen samples van 
 bijvoorbeeld de body van kick 1 en de top van kick 2. Layerforge mengt die stukken tot nieuwe samples.
 Alles draait op je eigen computer. Er gaat niets naar internet.
 
-> **Status: mijlpaal M2.** Je kunt 2 tot 4 samples laden, per sample kiezen wat je wilt houden,
-> en één blend maken. Meerdere variaties komen in mijlpaal M3.
+> **Status: mijlpaal M3.** Je kunt 2 tot 4 samples laden, per deel (Low, Mid, High) een richting kiezen
+> en 1 tot 16 variaties maken. Luister-gereedschap (solo, mono, loop) komt in mijlpaal M4.
 
 ## Downloaden
 
@@ -31,26 +31,35 @@ Laat het zwarte venster openstaan zolang je Layerforge gebruikt. Sluit het venst
 1. Kies bovenaan het **Sound type** (kick, clap, closedhat, openhat, crash of perc).
 2. Sleep een sample in een vak, of klik op het vak om een bestand te kiezen. Laad er 2 tot 4.
    Met **+ Add sample slot** maak je een extra vak. Met **✕** haal je een sample weg.
-3. Onder elk sample staat een raster. De rijen zijn **banden** (stukken van het frequentiebereik,
-   van Sub onderaan tot Air bovenaan). De kolommen zijn **tijdzones**: Attack (de klap aan het begin),
-   Sustain (het lijf) en Tail (de staart).
-4. Klik op een vakje: **open** (leeg) → **KEEP** (oranje: dit stuk wil ik) → **✕ avoid** (dit stuk wil ik niet)
-   → weer open. Klik op een rijnaam (bijv. *Body*) of kolomnaam (bijv. *Attack*) om de hele rij of kolom
-   in één keer te zetten.
-5. Klik **Generate**. Onder **Result** verschijnt je nieuwe sample.
-6. Klik op de golfvorm of ▶ om te luisteren. **Compare with simple stack** wisselt bij elke klik tussen jouw
-   blend en de "simpele stapel" (alle samples gewoon op elkaar). Alles speelt even luid af.
-   **Download** slaat de WAV op. Spatiebalk = afspelen of stoppen.
+3. Bij **Direction** kies je per deel welk sample de richting geeft:
+   - **Low** = het laag (bij een kick: Sub + Body)
+   - **Mid** = het midden
+   - **High** = de top en de lucht
+   Klik op het nummer van een sample, of op **Free**. Free betekent: Layerforge kiest zelf, en dat is per
+   variatie anders. Je hoeft niets te kiezen; alles op Free mag ook.
+4. Kies hoeveel **Variations** je wilt (1 tot 16) en hoeveel ze mogen afwijken (**Variation amount**:
+   0% = alleen precies jouw keuze, 100% = veel verschil).
+5. Klik **Generate**. Onder **Results** verschijnt een kaart per variatie. **v01** is altijd de "basis":
+   precies jouw keuze, zonder toeval. De andere variaties zijn zo gekozen dat ze duidelijk van elkaar
+   verschillen.
+6. Luisteren: klik op een kaart. Met de pijltjestoetsen ga je naar de volgende kaart, met de spatiebalk
+   speel je af of stop je. **A/B stack** wisselt tussen de variatie en de "simpele stapel" (alle samples
+   gewoon op elkaar). Alles speelt even luid af, zodat harder niet wint.
+7. Bewaren: **★** zet een kopie in je map `Favourites`. **Download** slaat de WAV op. Je kunt een kaart ook
+   rechtstreeks naar je DAW slepen (werkt in Chrome en Edge). **Recipe** toont alle getallen van die blend.
 
-Open vakjes vult Layerforge zelf in: daar komt het sample met de meeste energie in dat vakje.
-In de laagste banden (Sub en Body bij een kick) mengt Layerforge nooit twee samples, want lage tonen
-kunnen elkaar uitdoven. Daar wint altijd één sample.
+**Seed en Lock.** De seed is het startgetal voor het toeval. Elke klik op Generate kiest een nieuwe seed,
+dus je krijgt steeds nieuwe variaties. Zet **Lock** aan om dezelfde seed te houden: met dezelfde samples,
+keuzes en instellingen krijg je dan precies dezelfde variaties terug. **New seed** kiest een nieuw getal.
 
-**Waar staan mijn bestanden?** In de map `Layerforge` in je persoonlijke map
-(Mac: `/Users/<jouw naam>/Layerforge`, Windows: `C:\Users\<jouw naam>\Layerforge`).
+In het laag mengt Layerforge nooit twee samples door elkaar, want lage tonen kunnen elkaar uitdoven.
+Daar wint altijd één sample. Variaties waarbij het laag toch zwakker wordt, gooit Layerforge zelf weg.
+
+**Waar staan mijn bestanden?** Klik op **Open Layerforge folder**. Het is de map `Layerforge` in je
+persoonlijke map (Mac: `/Users/<jouw naam>/Layerforge`, Windows: `C:\Users\<jouw naam>\Layerforge`).
 Elke keer dat je op Generate klikt, komt er een map bij in `Projects`. Daarin staan een kopie van je
-samples (`inputs`), de blend (`variations/v01.wav`), het recept (`v01.json`, alle getallen van de blend)
-en `simple_stack.wav`.
+samples (`inputs`), de variaties (`variations/v01.wav`, `v02.wav`, ...), per variatie het recept
+(`v01.json`) en `simple_stack.wav`. Je sterren staan in `Favourites`.
 
 ## Controleren of alles werkt
 

@@ -3,15 +3,16 @@
 "use strict";
 
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
-const STATES = ["open", "keep", "avoid"];
 const MATCH_RMS = Math.pow(10, -20 / 20);   // every played sound is matched to this RMS (first 200 ms)
 const MATCH_MAX_GAIN = Math.pow(10, 12 / 20);
 
 let PRESETS = null;
-let slots = [];          // {el, upload, buffer, keep: [band][zone] -> [state, strength]}
+let slots = [];          // {el, upload, buffer}
+let groups = [];         // per group (Low, Mid, High): the chosen slot object, or null = Free
+let cards = [];          // result cards: {el, play()}
 let audioCtx = null;
-let current = null;      // {source, gainNode, onstop}
-let lastPlayed = null;   // function that plays the last thing again (space bar)
+let current = null;      // {source, onstop}
+let lastPlayed = null;   // plays the last thing again (space bar)
 let busy = false;
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -25,6 +26,10 @@ async function api(path, options = {}) {
   return data;
 }
 
+async function postJson(path, body) {
+  return api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
+
 function fileUrl(id, download) {
   return `/api/file/${id}?token=${encodeURIComponent(TOKEN)}${download ? "&download=1" : ""}`;
 }
@@ -34,6 +39,8 @@ function setStatus(text, bad) {
   s.textContent = text || "";
   s.classList.toggle("bad", !!bad);
 }
+
+function randomSeed() { return Math.floor(Math.random() * 2147483647); }
 
 // ---------------------------------------------------------------- audio
 function ctx() {
@@ -70,20 +77,18 @@ function play(buffer, onstart, onstop) {
   const gainNode = ac.createGain();
   gainNode.gain.value = matchGain(buffer);
   source.connect(gainNode).connect(ac.destination);
-  const me = { source, gainNode, onstop };
+  const me = { source, onstop };
   source.onended = () => { if (current === me) { current = null; if (onstop) onstop(); } };
   current = me;
   if (onstart) onstart();
   source.start();
 }
 
-async function decode(arrayBuffer) {
-  return await ctx().decodeAudioData(arrayBuffer);
-}
+async function decode(arrayBuffer) { return await ctx().decodeAudioData(arrayBuffer); }
 
 function drawWave(canvas, buffer) {
-  const w = canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
-  const h = canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+  const w = canvas.width = Math.max(1, canvas.clientWidth * (window.devicePixelRatio || 1));
+  const h = canvas.height = Math.max(1, canvas.clientHeight * (window.devicePixelRatio || 1));
   const g = canvas.getContext("2d");
   g.clearRect(0, 0, w, h);
   g.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--wave").trim() || "#9fb4ff";
@@ -96,22 +101,18 @@ function drawWave(canvas, buffer) {
   for (let x = 0; x < w; x++) {
     const a = Math.floor((x / w) * n), b = Math.max(a + 1, Math.floor(((x + 1) / w) * n));
     let lo = 0, hi = 0;
-    for (const d of chans) for (let i = a; i < b; i++) { lo = Math.min(lo, d[i]); hi = Math.max(hi, d[i]); }
+    for (const d of chans) for (let i = a; i < b && i < n; i++) { lo = Math.min(lo, d[i]); hi = Math.max(hi, d[i]); }
     const y1 = h / 2 - (hi / peak) * (h / 2 - 2), y2 = h / 2 - (lo / peak) * (h / 2 - 2);
     g.fillRect(x, y1, 1, Math.max(1, y2 - y1));
   }
 }
 
-// ---------------------------------------------------------------- slots
-function bandsOf(type) { return PRESETS.types[type].bands; }
-
-function emptyKeep() {
-  return bandsOf($("#soundType").value).map(() => [0, 1, 2].map(() => ["open", 1.0]));
-}
+// ---------------------------------------------------------------- samples
+function loadedSlots() { return slots.filter((s) => s.upload); }
 
 function addSlot() {
   const el = $("#slotTemplate").content.firstElementChild.cloneNode(true);
-  const slot = { el, upload: null, buffer: null, keep: emptyKeep() };
+  const slot = { el, upload: null, buffer: null };
   slots.push(slot);
   const drop = $(".drop", el), input = $("input", el);
   drop.addEventListener("click", () => input.click());
@@ -132,14 +133,15 @@ function addSlot() {
   };
   $(".play", el).addEventListener("click", playSlot);
   $(".wave", el).addEventListener("click", playSlot);
-  renderSlots();
+  render();
 }
 
 function removeSlot(slot) {
   stop();
   slots = slots.filter((s) => s !== slot);
+  groups = groups.map((g) => (g === slot ? null : g));
   while (slots.length < PRESETS.min_inputs) addSlot();
-  renderSlots();
+  render();
 }
 
 async function loadFile(slot, file) {
@@ -160,70 +162,25 @@ async function loadFile(slot, file) {
   } catch (err) {
     setStatus(`Kan ${file.name} niet laden: ${err.message}`, true);
   }
-  renderSlots();
-}
-
-function renderKeepmap(slot) {
-  const table = $(".keepmap", slot.el);
-  const bands = bandsOf($("#soundType").value);
-  table.innerHTML = "";
-  const head = table.insertRow();
-  const corner = document.createElement("th");
-  corner.className = "rowhead";
-  head.appendChild(corner);
-  PRESETS.zones.forEach((z, zi) => {
-    const th = document.createElement("th");
-    th.textContent = z;
-    th.title = "Click: set the whole column";
-    th.addEventListener("click", () => setMany(slot, bands.map((_, b) => [b, zi])));
-    head.appendChild(th);
-  });
-  for (let b = bands.length - 1; b >= 0; b--) {   // highest band on top
-    const tr = table.insertRow();
-    const th = document.createElement("th");
-    th.className = "rowhead";
-    th.textContent = bands[b];
-    th.title = "Click: set the whole row";
-    th.addEventListener("click", () => setMany(slot, [0, 1, 2].map((z) => [b, z])));
-    tr.appendChild(th);
-    for (let z = 0; z < 3; z++) {
-      const td = tr.insertCell();
-      const st = slot.keep[b][z][0];
-      td.className = st;
-      td.textContent = st === "keep" ? "KEEP" : st === "avoid" ? "✕" : "";
-      td.title = `${bands[b]} / ${PRESETS.zones[z]}: ${st}`;
-      td.addEventListener("click", () => {
-        const next = STATES[(STATES.indexOf(slot.keep[b][z][0]) + 1) % 3];
-        slot.keep[b][z] = [next, 1.0];
-        renderKeepmap(slot);
-      });
-    }
-  }
-}
-
-function setMany(slot, cells) {
-  // cycle all cells together, starting from the state of the first one
-  const first = slot.keep[cells[0][0]][cells[0][1]][0];
-  const next = STATES[(STATES.indexOf(first) + 1) % 3];
-  for (const [b, z] of cells) slot.keep[b][z] = [next, 1.0];
-  renderKeepmap(slot);
+  render();
 }
 
 function renderSlots() {
   const box = $("#slots");
   box.innerHTML = "";
+  const loaded = loadedSlots();
   for (const slot of slots) {
     box.appendChild(slot.el);
-    const loaded = !!slot.upload;
-    $(".drop", slot.el).hidden = loaded;
-    $(".loaded", slot.el).hidden = !loaded;
-    if (loaded) {
+    const isLoaded = !!slot.upload;
+    $(".drop", slot.el).hidden = isLoaded;
+    $(".loaded", slot.el).hidden = !isLoaded;
+    if (isLoaded) {
+      $(".badge", slot.el).textContent = String(loaded.indexOf(slot) + 1);
       $(".slot-name", slot.el).textContent = slot.upload.name;
       $(".slot-name", slot.el).title = slot.upload.name;
       $(".slot-meta", slot.el).textContent =
         `${(slot.upload.seconds * 1000).toFixed(0)} ms · ${(slot.upload.sample_rate / 1000).toFixed(1)} kHz · ` +
         (slot.upload.channels === 1 ? "mono" : "stereo");
-      renderKeepmap(slot);
     }
   }
   if (slots.length < PRESETS.max_inputs) {
@@ -233,19 +190,64 @@ function renderSlots() {
     add.addEventListener("click", addSlot);
     box.appendChild(add);
   }
-  // canvases need to be in the DOM to have a size
   for (const slot of slots) if (slot.upload && slot.buffer) drawWave($(".wave", slot.el), slot.buffer);
-  const ready = slots.filter((s) => s.upload).length;
-  $("#generate").disabled = busy || ready < PRESETS.min_inputs;
+}
+
+// ---------------------------------------------------------------- direction (Low / Mid / High)
+function renderDirection() {
+  const loaded = loadedSlots();
+  $("#directionSection").hidden = loaded.length === 0;
+  const table = $("#direction");
+  table.innerHTML = "";
+  const head = table.insertRow();
+  head.appendChild(document.createElement("th"));
+  loaded.forEach((s, i) => {
+    const th = document.createElement("th");
+    th.className = "src";
+    th.textContent = `${i + 1}: ${s.upload.name.replace(/\.[^.]+$/, "")}`;
+    th.title = s.upload.name;
+    head.appendChild(th);
+  });
+  const freeHead = document.createElement("th");
+  freeHead.className = "src";
+  freeHead.textContent = "Free";
+  head.appendChild(freeHead);
+  const bandsPerGroup = PRESETS.types[$("#soundType").value].groups;
+  for (let g = PRESETS.groups.length - 1; g >= 0; g--) {   // High on top
+    const tr = table.insertRow();
+    const th = document.createElement("th");
+    th.className = "group";
+    th.innerHTML = `${PRESETS.groups[g]}<small></small>`;
+    $("small", th).textContent = bandsPerGroup[g].join(" + ");
+    tr.appendChild(th);
+    const choices = loaded.concat([null]);
+    for (const choice of choices) {
+      const td = tr.insertCell();
+      const btn = document.createElement("button");
+      const on = groups[g] === choice;
+      btn.className = (choice === null ? "free " : "") + (on ? "on" : "");
+      btn.textContent = choice === null ? "Free" : String(loaded.indexOf(choice) + 1);
+      btn.title = choice === null ? "Layerforge decides (different per variation)" : choice.upload.name;
+      btn.addEventListener("click", () => { groups[g] = choice; renderDirection(); });
+      td.appendChild(btn);
+    }
+  }
+}
+
+function render() {
+  renderSlots();
+  renderDirection();
+  $("#generate").disabled = busy || loadedSlots().length < PRESETS.min_inputs;
 }
 
 // ---------------------------------------------------------------- generate
 async function generate() {
-  const loaded = slots.filter((s) => s.upload);
+  const loaded = loadedSlots();
   if (loaded.length < PRESETS.min_inputs) return;
   stop();
+  if (!$("#lock").checked || $("#seed").value === "") $("#seed").value = String(randomSeed());
   busy = true;
-  renderSlots();
+  render();
   $("#progressWrap").hidden = false;
   $("#progressBar").style.width = "0%";
   setStatus("Generating...");
@@ -254,12 +256,13 @@ async function generate() {
     const body = {
       sound_type: $("#soundType").value,
       sample_rate: rate === "auto" ? "auto" : Number(rate),
+      variations: Number($("#count").value),
+      amount: Number($("#amount").value),
+      seed: Number($("#seed").value),
       inputs: loaded.map((s) => ({ id: s.upload.id, trim_db: 0 })),
-      keepmap: loaded.map((s) => s.keep),
+      groups: groups.map((g) => (g && loaded.includes(g) ? loaded.indexOf(g) : null)),
     };
-    const { job } = await api("/api/generate", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
+    const { job } = await postJson("/api/generate", body);
     let snap;
     for (;;) {
       await new Promise((r) => setTimeout(r, 200));
@@ -276,7 +279,7 @@ async function generate() {
   } finally {
     busy = false;
     $("#progressWrap").hidden = true;
-    renderSlots();
+    render();
   }
 }
 
@@ -286,42 +289,84 @@ async function fetchBuffer(id) {
   return await decode(await res.arrayBuffer());
 }
 
+async function showRecipe(title, fileId) {
+  const text = await (await fetch(`/api/recipe/${fileId}?token=${encodeURIComponent(TOKEN)}`)).text();
+  $("#recipeTitle").textContent = title;
+  $("#recipeText").textContent = text;
+  $("#recipeDialog").showModal();
+}
+
+function selectCard(i, andPlay) {
+  if (!cards.length) return;
+  i = (i + cards.length) % cards.length;
+  cards.forEach((c, k) => c.el.classList.toggle("selected", k === i));
+  cards[i].el.focus();
+  if (andPlay) cards[i].play(false);
+}
+
 async function showResults(result) {
   const box = $("#resultCards");
   box.innerHTML = "";
-  const stackBuf = await fetchBuffer(result.stack);
+  cards = [];
+  $("#results").hidden = false;
+  const notes = $("#notes");
+  notes.hidden = !result.notes.length;
+  notes.textContent = result.notes.join(" ");
+  const stackBuf = result.stack ? await fetchBuffer(result.stack) : null;
   for (const v of result.variations) {
     const buf = await fetchBuffer(v.file);
-    const card = document.createElement("div");
-    card.className = "card";
-    card.innerHTML = `
+    const el = document.createElement("div");
+    el.className = "card";
+    el.tabIndex = 0;
+    el.draggable = true;
+    el.innerHTML = `
       <div class="row"><span class="title"></span><span class="muted ms"></span></div>
       <canvas class="wave" height="70"></canvas>
       <div class="row">
-        <button class="play round" title="Play">▶</button>
-        <button class="ab">Compare with simple stack</button>
+        <button class="star round" title="Star: copy to Favourites">☆</button>
+        <button class="ab" title="Switch between this variation and the simple stack">A/B stack</button>
         <a class="button dl" title="Download WAV">Download</a>
-      </div>
-      <div class="row"><span class="ab-label muted"></span></div>`;
-    $(".title", card).textContent = `${result.project} · ${v.name}`;
-    $(".ms", card).textContent = `${(v.seconds * 1000).toFixed(0)} ms`;
-    $(".dl", card).href = fileUrl(v.file, true);
-    box.appendChild(card);
-    $("#results").hidden = false;
-    drawWave($(".wave", card), buf);
-    const label = $(".ab-label", card);
-    let showingStack = false;
-    const playIt = (which) => {
-      const isStack = which === "stack";
-      lastPlayed = () => playIt(which);
-      play(isStack ? stackBuf : buf,
-        () => { card.classList.add("playing"); label.textContent = isStack ? "Now playing: simple stack" : "Now playing: your blend"; },
-        () => card.classList.remove("playing"));
+        <button class="recipe" title="Show the recipe (all numbers of this blend)">Recipe</button>
+      </div>`;
+    const fname = `layerforge_${result.project}_${v.name}.wav`;
+    $(".title", el).textContent = v.name;
+    $(".ms", el).textContent = `${(v.seconds * 1000).toFixed(0)} ms`;
+    const dl = $(".dl", el);
+    dl.href = fileUrl(v.file, true);
+    dl.setAttribute("download", fname);
+    box.appendChild(el);
+    drawWave($(".wave", el), buf);
+    const card = { el, buf, abStack: false };
+    const index = cards.length;
+    card.play = (stack) => {
+      card.abStack = !!stack && !!stackBuf;
+      $(".ab", el).classList.toggle("on", card.abStack);
+      lastPlayed = () => card.play(card.abStack);
+      play(card.abStack ? stackBuf : buf, () => el.classList.add("playing"), () => el.classList.remove("playing"));
     };
-    $(".play", card).addEventListener("click", () => { showingStack = false; playIt("blend"); });
-    $(".wave", card).addEventListener("click", () => { showingStack = false; playIt("blend"); });
-    $(".ab", card).addEventListener("click", () => { showingStack = !showingStack; playIt(showingStack ? "stack" : "blend"); });
+    cards.push(card);
+    el.addEventListener("click", (e) => {
+      if (e.target.closest("button, a")) return;
+      selectCard(index, true);
+    });
+    $(".ab", el).addEventListener("click", () => { selectCard(index, false); card.play(!card.abStack); });
+    $(".recipe", el).addEventListener("click", () => showRecipe(`${result.project} · ${v.name}`, v.file));
+    const star = $(".star", el);
+    star.addEventListener("click", async () => {
+      const on = !star.classList.contains("on");
+      try {
+        await postJson("/api/star", { file: v.file, on });
+        star.classList.toggle("on", on);
+        star.textContent = on ? "★" : "☆";
+      } catch (err) { setStatus(`Star mislukt: ${err.message}`, true); }
+    });
+    el.addEventListener("dragstart", (e) => {
+      const url = new URL(fileUrl(v.file, true), location.href).href;
+      e.dataTransfer.setData("DownloadURL", `audio/wav:${fname}:${url}`);
+      e.dataTransfer.setData("text/uri-list", url);
+    });
   }
+  if (cards.length) selectCard(0, false);
   $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -334,6 +379,7 @@ async function init() {
     return;
   }
   $("#version").textContent = `v${PRESETS.version}`;
+  groups = PRESETS.groups.map(() => null);
   const sel = $("#soundType");
   for (const t of Object.keys(PRESETS.types)) {
     const o = document.createElement("option");
@@ -341,19 +387,49 @@ async function init() {
     o.textContent = t;
     sel.appendChild(o);
   }
-  sel.addEventListener("change", () => {
-    for (const s of slots) s.keep = emptyKeep();   // band names differ per type
-    renderSlots();
+  sel.addEventListener("change", render);
+  const v = PRESETS.variations;
+  for (const id of ["#count", "#countRange"]) {
+    $(id).min = v.min; $(id).max = v.max; $(id).value = v.default;
+  }
+  $("#countRange").addEventListener("input", () => { $("#count").value = $("#countRange").value; });
+  $("#count").addEventListener("change", () => {
+    const n = Math.min(v.max, Math.max(v.min, Math.round(Number($("#count").value) || v.default)));
+    $("#count").value = n;
+    $("#countRange").value = n;
   });
+  $("#amount").value = PRESETS.amount_default;
+  const showAmount = () => { $("#amountLabel").textContent = `${$("#amount").value}%`; };
+  $("#amount").addEventListener("input", showAmount);
+  showAmount();
+  $("#seed").value = String(randomSeed());
+  $("#newSeed").addEventListener("click", () => { $("#seed").value = String(randomSeed()); });
+  $("#seed").addEventListener("change", () => { $("#lock").checked = true; });
+  $("#openFolder").addEventListener("click", async () => {
+    try {
+      const r = await postJson("/api/open-folder", {});
+      setStatus(`Folder: ${r.path}`);
+    } catch (err) { setStatus(`Kan de map niet openen: ${err.message}`, true); }
+  });
+  $("#recipeClose").addEventListener("click", () => $("#recipeDialog").close());
   for (let i = 0; i < PRESETS.min_inputs; i++) addSlot();
   $("#generate").addEventListener("click", generate);
   document.addEventListener("keydown", (e) => {
-    if (e.code === "Space" && !["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)) {
+    const tag = document.activeElement ? document.activeElement.tagName : "";
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(tag) || $("#recipeDialog").open) return;
+    if (e.code === "Space") {
       e.preventDefault();
       if (current) stop(); else if (lastPlayed) lastPlayed();
+    } else if (cards.length && ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(e.code)) {
+      e.preventDefault();
+      const sel = cards.findIndex((c) => c.el.classList.contains("selected"));
+      selectCard(sel + (e.code === "ArrowRight" || e.code === "ArrowDown" ? 1 : -1), true);
     }
   });
-  window.addEventListener("resize", () => renderSlots());
+  window.addEventListener("resize", () => {
+    renderSlots();
+    for (const c of cards) drawWave($(".wave", c.el), c.buf);
+  });
 }
 
 init();

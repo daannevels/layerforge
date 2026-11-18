@@ -54,8 +54,9 @@ Phase 2 = a JUCE/VST3 port in C++, so the engine must stay portable. The full br
 
 ## Milestones
 - M1 Skeleton (layout, uv, launchers, CI, fixtures, selftest stub, "Layerforge works" page) — done ✅
-- M2 Engine (sections 4–5) + first sound (minimal UI, base variation, compare with simple stack) — done, awaiting OK
-- M3 Variations (planner, quality gate, selection, results grid, workspace, `render`)
+- M2 Engine (sections 4–5) + first sound (minimal UI, base variation, compare with simple stack) — done ✅
+- M3 Variations (planner, quality gate, selection, results grid, workspace, `render`) + simple
+  Low/Mid/High direction UI (Daan's feedback on M2) — done, awaiting OK
 - M4 Editing and listening tools (spectrogram/waveform editing, solo, mono, loop, A/B, Advanced)
 - M5 Polish and port-readiness (README, ENGINE_SPEC, PROJECT_SUMMARY, golden vectors, tag v0.1.0)
 
@@ -78,5 +79,24 @@ Phase 2 = a JUCE/VST3 port in C++, so the engine must stay portable. The full br
 - Mono-or-stereo: if any input is stereo, all are stereo. Inputs with >2 channels keep the first two.
 - UI playback is loudness-matched: every sound is played at -20 dB RMS over its first 200 ms
   (gain capped at +12 dB). Changing the sound type resets the keep-map grids.
+- **Simple direction UI (Daan, after M2):** the per-cell keep-map grid is gone from the UI (Daan: do not
+  keep it as Advanced; he will ask if he wants it back). The UI sends `groups` = [Low, Mid, High], each an
+  input index or null (Free). `presets.group_keepmap` turns that into a keep-map: keep (100 %) on every
+  zone of every band in the group; everything else open. `TypePreset.band_groups` maps bands to groups
+  (kick: Sub+Body=Low, Mids=Mid, Top+Air=High; other types: Low=Low, Body=Mid, the top two=High).
+  The engine still supports the full keep/avoid/strength keep-map.
+- Variations: the pool is planned and judged on mono sums of the inputs (half the work for stereo);
+  the picked candidates are rendered from the real inputs. Every candidate has its own generator
+  `default_rng([seed, candidate])`, and the draw order inside a candidate is fixed.
+- Band-edge jitter is applied to a candidate with probability `BAND_EDGE_JITTER_PROB` (0.5); the other
+  candidates reuse the cached base band split (speed: 16 variations of four 1 s stereo inputs ≈ 8 s here).
+- Extra alignment offsets (jitter) move only the non-lead owners of a band (the lead stays put).
+- Quality gate details: silence = RMS of the first 100 ms before normalisation; low-end R is measured on
+  the per-input contributions to the output below 200 Hz (FFT brick-wall, measurement only); pool
+  candidates are normalised on the sample peak (`fast_peak`), real outputs on the true peak.
+- Features: band energies come from the power spectrum with the type's DEFAULT edges.
+- Oversampling FIR: Kaiser sinc, 24 taps per side per phase (193 taps at 4x), beta 8, cutoff 0.9 Nyquist.
+- `layerforge render vNN.json` finds inputs via `InputSpec.file` (relative to the project folder) and
+  writes `vNN_render.wav`; it is byte-identical to `vNN.wav` (tested).
 - Uploads are kept in memory by the server; Generate copies them to `Projects/<id>/inputs/inputN.ext`
   (the original names only go into project.json).

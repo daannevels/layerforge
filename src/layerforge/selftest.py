@@ -68,12 +68,28 @@ def _check_render() -> str:
     return f"blended {len(GENERATORS)} sound types at 44.1 and 48 kHz into valid 24-bit WAVs"
 
 
+def _check_variations() -> str:
+    from layerforge.engine.presets import group_keepmap
+    from layerforge.engine.select import generate
+    from layerforge.engine.types import Settings
+    from layerforge.synth import make_kick
+    ins = [np.concatenate([np.zeros(100 * k), make_kick(150 + 25 * k, 45 + 5 * k, 0.02 + 0.01 * k,
+                                                        0.2, 0.3 + 0.1 * k, k, seed=k)])[None] for k in range(3)]
+    km = group_keepmap("kick", 3, [0, None, 1])
+    a = generate(ins, ["a", "b", "c"], km, Settings(), 6, 50, 1234)
+    b = generate(ins, ["a", "b", "c"], km, Settings(), 6, 50, 1234)
+    assert len(a.variations) == 6, len(a.variations)
+    assert all(np.array_equal(x.audio, y.audio) for x, y in zip(a.variations, b.variations))
+    return "made 6 different variations, and the same seed gave the same 6 again"
+
+
 CHECKS: list[tuple[str, Callable[[], str]]] = [
     ("Dependencies", _check_imports),
     ("Presets", _check_presets),
     ("Synthetic sounds", _check_synth),
     ("Band split", _check_bands),
     ("Blend engine", _check_render),
+    ("Variations", _check_variations),
 ]
 
 

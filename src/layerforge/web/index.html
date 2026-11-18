@@ -19,7 +19,21 @@
         <option value="48000">48 kHz</option>
       </select>
     </label>
+    <label class="field">Variations
+      <input id="countRange" type="range" min="1" max="16" value="8">
+      <input id="count" type="number" min="1" max="16" value="8" class="num">
+    </label>
+    <label class="field">Variation amount
+      <input id="amount" type="range" min="0" max="100" value="50">
+      <span id="amountLabel" class="num-label">50%</span>
+    </label>
+    <div class="field">Seed
+      <input id="seed" type="number" min="0" class="num seed">
+      <label class="check"><input id="lock" type="checkbox"> Lock</label>
+      <button id="newSeed" title="New random seed">New seed</button>
+    </div>
     <button id="generate" class="primary" disabled>Generate</button>
+    <button id="openFolder" title="Show your Layerforge folder">Open Layerforge folder</button>
     <div class="progress" id="progressWrap" hidden><div id="progressBar"></div></div>
     <span id="status" class="muted"></span>
   </header>
@@ -27,20 +41,33 @@
   <main>
     <section>
       <h2>Samples</h2>
-      <p class="help">Laad 2 tot 4 samples van hetzelfde soort. Klik op een vakje om te kiezen wat je wilt
-        houden: <b>open</b> → <b class="keep-text">keep</b> → <b class="avoid-text">avoid</b> → open.
-        Een hele rij of kolom: klik op de naam ervan. Spatiebalk = afspelen of stoppen.</p>
+      <p class="help">Laad 2 tot 4 samples van hetzelfde soort (sleep ze in een vak of klik erop).
+        Spatiebalk = afspelen of stoppen.</p>
       <div id="slots" class="slots"></div>
     </section>
 
+    <section id="directionSection" hidden>
+      <h2>Direction</h2>
+      <p class="help">Kies per deel welk sample de richting geeft. <b>Free</b> = Layerforge kiest zelf, en dat
+        is per variatie anders. Je hoeft niet alles te kiezen.</p>
+      <table id="direction" class="direction"></table>
+    </section>
+
     <section id="results" hidden>
-      <h2>Result</h2>
-      <p class="help">Klik op de golfvorm om af te spelen. <b>Compare with simple stack</b> speelt om en om
-        jouw blend en de simpele stapel (alle samples gewoon opgeteld). Ze klinken even luid, zodat harder
-        niet wint.</p>
+      <h2>Results</h2>
+      <p class="help">Klik op een kaart om te luisteren. Pijltjestoetsen = naar de volgende of vorige kaart.
+        ★ bewaart een kopie in je map Favourites. Sleep een kaart naar je DAW (werkt in Chrome en Edge), of
+        gebruik Download. <b>A/B stack</b> wisselt tussen de variatie en alle samples gewoon opgeteld. Alles
+        speelt even luid af, zodat harder niet wint.</p>
+      <p id="notes" class="notes" hidden></p>
       <div id="resultCards" class="cards"></div>
     </section>
   </main>
+
+  <dialog id="recipeDialog">
+    <div class="dialog-head"><b id="recipeTitle">Recipe</b><button id="recipeClose" class="round" title="Close">✕</button></div>
+    <pre id="recipeText"></pre>
+  </dialog>
 
   <template id="slotTemplate">
     <div class="slot">
@@ -50,13 +77,13 @@
       </div>
       <div class="loaded" hidden>
         <div class="slot-head">
+          <span class="badge"></span>
           <button class="play round" title="Play">▶</button>
           <div class="slot-name"></div>
           <button class="remove round" title="Remove">✕</button>
         </div>
         <div class="slot-meta muted"></div>
         <canvas class="wave" height="70"></canvas>
-        <table class="keepmap"></table>
       </div>
     </div>
   </template>
