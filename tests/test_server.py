@@ -44,7 +44,7 @@ def request(app, method, path, headers=None, body=None, host=None):
 def test_page_served_and_says_it_works(server):
     status, body = request(server, "GET", "/")
     assert status == 200
-    assert b"Layerforge works" in body
+    assert b"Layerforge" in body and b"app.js" in body
 
 
 def test_api_needs_token(server):

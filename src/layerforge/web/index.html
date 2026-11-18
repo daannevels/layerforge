@@ -7,11 +7,60 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <main class="hello">
-    <h1>Layerforge works</h1>
-    <p class="version">Version <span id="version">…</span></p>
-    <p id="status" class="status">Connecting to the engine…</p>
+  <header class="topbar">
+    <div class="brand">Layerforge <span id="version" class="muted"></span></div>
+    <label class="field">Sound type
+      <select id="soundType"></select>
+    </label>
+    <label class="field">Output rate
+      <select id="rate">
+        <option value="auto">Auto</option>
+        <option value="44100">44.1 kHz</option>
+        <option value="48000">48 kHz</option>
+      </select>
+    </label>
+    <button id="generate" class="primary" disabled>Generate</button>
+    <div class="progress" id="progressWrap" hidden><div id="progressBar"></div></div>
+    <span id="status" class="muted"></span>
+  </header>
+
+  <main>
+    <section>
+      <h2>Samples</h2>
+      <p class="help">Laad 2 tot 4 samples van hetzelfde soort. Klik op een vakje om te kiezen wat je wilt
+        houden: <b>open</b> → <b class="keep-text">keep</b> → <b class="avoid-text">avoid</b> → open.
+        Een hele rij of kolom: klik op de naam ervan. Spatiebalk = afspelen of stoppen.</p>
+      <div id="slots" class="slots"></div>
+    </section>
+
+    <section id="results" hidden>
+      <h2>Result</h2>
+      <p class="help">Klik op de golfvorm om af te spelen. <b>Compare with simple stack</b> speelt om en om
+        jouw blend en de simpele stapel (alle samples gewoon opgeteld). Ze klinken even luid, zodat harder
+        niet wint.</p>
+      <div id="resultCards" class="cards"></div>
+    </section>
   </main>
+
+  <template id="slotTemplate">
+    <div class="slot">
+      <div class="drop">
+        <input type="file" accept=".wav,.aif,.aiff,.flac" hidden>
+        <div class="drop-label">Drop a sample here<br><span class="muted">or click to choose (WAV, AIFF, FLAC)</span></div>
+      </div>
+      <div class="loaded" hidden>
+        <div class="slot-head">
+          <button class="play round" title="Play">▶</button>
+          <div class="slot-name"></div>
+          <button class="remove round" title="Remove">✕</button>
+        </div>
+        <div class="slot-meta muted"></div>
+        <canvas class="wave" height="70"></canvas>
+        <table class="keepmap"></table>
+      </div>
+    </div>
+  </template>
+
   <script src="/app.js"></script>
 </body>
 </html>
