@@ -99,10 +99,9 @@ def test_upload_generate_and_download(server, tmp_path):
         status, body = upload(server, wav_bytes(x, 48000), f"kick {seed}.wav")
         assert status == 200, body
         ids.append(json.loads(body)["id"])
-    keep = [[[["keep" if (i == 0 and b == 1) else "open", 1.0] for _ in range(3)] for b in range(5)]
-            for i in range(2)]
-    req = json.dumps({"sound_type": "kick", "sample_rate": "auto",
-                      "inputs": [{"id": i, "trim_db": 0} for i in ids], "keepmap": keep}).encode()
+    req = json.dumps({"sound_type": "kick", "sample_rate": "auto", "variations": 3, "amount": 50,
+                      "seed": 42, "inputs": [{"id": i, "trim_db": 0} for i in ids],
+                      "groups": [0, None, 1]}).encode()
     status, body = request(server, "POST", "/api/generate",
                            dict(TOK, **{"Content-Type": "application/json", "Content-Length": str(len(req))}), req)
     assert status == 200, body
@@ -120,10 +119,30 @@ def test_upload_generate_and_download(server, tmp_path):
     assert (proj / "variations" / "v01.wav").is_file() and (proj / "variations" / "v01.json").is_file()
     assert (proj / "inputs" / "input1.wav").is_file() and (proj / "project.json").is_file()
     assert (proj / "simple_stack.wav").is_file()
+    assert len(snap["result"]["variations"]) == 3 and snap["result"]["seed"] == 42
+    assert (proj / "variations" / "v03.wav").is_file()
+    status, rec = request(server, "GET", f"/api/recipe/{fid}?token=test-token")
+    assert status == 200 and json.loads(rec)["inputs"][0]["file"] == "inputs/input1.wav"
+    star = json.dumps({"file": fid, "on": True}).encode()
+    assert request(server, "POST", "/api/star", dict(TOK, **{"Content-Length": str(len(star))}), star)[0] == 200
+    favs = list((tmp_path / "Favourites").iterdir())
+    assert len(favs) == 1 and favs[0].name.endswith("_v01.wav")
+    unstar = json.dumps({"file": fid, "on": False}).encode()
+    request(server, "POST", "/api/star", dict(TOK, **{"Content-Length": str(len(unstar))}), unstar)
+    assert not list((tmp_path / "Favourites").iterdir())
+    # `layerforge render` rebuilds v01 bit for bit
+    from layerforge.cli import main
+    assert main(["render", str(proj / "variations" / "v02.json")]) == 0
+    from layerforge.audio_io import read_audio
+    a, _ = read_audio(proj / "variations" / "v02.wav")
+    b, _ = read_audio(proj / "variations" / "v02_render.wav")
+    assert np.array_equal(a, b)
+    assert (proj / "variations" / "v02.wav").read_bytes() == (proj / "variations" / "v02_render.wav").read_bytes()
 
 
 def test_generate_rejects_bad_requests(server):
     for body in [b"{not json", json.dumps({"sound_type": "snare"}).encode(),
-                 json.dumps({"sound_type": "kick", "inputs": [{"id": "x"}, {"id": "y"}]}).encode()]:
+                 json.dumps({"sound_type": "kick", "inputs": [{"id": "x"}, {"id": "y"}]}).encode(),
+                 b"[1, 2]"]:
         status, _ = request(server, "POST", "/api/generate", dict(TOK, **{"Content-Length": str(len(body))}), body)
         assert status == 400

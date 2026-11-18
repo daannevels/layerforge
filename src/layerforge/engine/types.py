@@ -80,6 +80,7 @@ class InputSpec:
     anchor: int          # samples (before the anchor shift)
     shift: int           # samples: anchor alignment delay (>= 0)
     gain_db: float       # level match + trim
+    file: str = ""       # input file relative to the project folder (for `layerforge render`)
 
 
 @dataclass

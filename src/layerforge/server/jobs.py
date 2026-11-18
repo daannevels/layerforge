@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import threading
 import time
 import traceback
@@ -16,10 +17,10 @@ import numpy as np
 from layerforge import __version__
 from layerforge.audio_io import default_output_rate, prepare_inputs, read_audio, wav_bytes
 from layerforge.engine import constants as C
-from layerforge.engine.planner import plan_base
-from layerforge.engine.presets import PRESETS
-from layerforge.engine.render import BandCache, render, render_simple_stack
-from layerforge.engine.types import CELL_STATES, Cell, KeepMap, Settings
+from layerforge.engine.presets import GROUP_NAMES, PRESETS, group_keepmap
+from layerforge.engine.render import render_simple_stack
+from layerforge.engine.select import generate
+from layerforge.engine.types import Settings
 
 
 @dataclass
@@ -57,7 +58,19 @@ class RequestError(ValueError):
     """Bad generate request; the message is shown to the user."""
 
 
-def parse_request(body: dict, uploads: dict[str, Upload]) -> tuple[Settings, list[Upload], KeepMap]:
+@dataclass
+class GenerateRequest:
+    settings: Settings
+    uploads: list[Upload]
+    groups: list[int | None]      # Low, Mid, High: input index or None (free)
+    variations: int
+    amount: float                 # percent
+    seed: int
+
+
+def parse_request(body: dict, uploads: dict[str, Upload]) -> GenerateRequest:
+    if not isinstance(body, dict):
+        raise RequestError("bad request")
     sound_type = body.get("sound_type")
     if sound_type not in PRESETS:
         raise RequestError("unknown sound type")
@@ -76,67 +89,86 @@ def parse_request(body: dict, uploads: dict[str, Upload]) -> tuple[Settings, lis
         rate = default_output_rate([u.sample_rate for u in ups])
     if rate not in C.OUTPUT_RATES:
         raise RequestError("output rate must be 44100 or 48000")
-    n_b = len(PRESETS[sound_type].band_names)
-    raw = body.get("keepmap")
-    try:
-        cells = [[[Cell(state=str(c[0]), strength=float(c[1])) for c in raw[i][b]] for b in range(n_b)]
-                 for i in range(len(ups))]
-    except (TypeError, IndexError, KeyError, ValueError):
-        raise RequestError("the keep-map does not match the samples and bands") from None
-    for inp in cells:
-        for band in inp:
-            if len(band) != 3:
-                raise RequestError("the keep-map needs 3 zones per band")
-            for c in band:
-                if c.state not in CELL_STATES:
-                    raise RequestError("unknown keep-map state")
-                c.strength = float(np.clip(c.strength, C.KEEP_STRENGTH_MIN, 1.0))
+    groups_raw = body.get("groups", [None] * len(GROUP_NAMES))
+    if not isinstance(groups_raw, list) or len(groups_raw) != len(GROUP_NAMES):
+        raise RequestError("choose a source (or Free) for Low, Mid and High")
+    groups: list[int | None] = []
+    for g in groups_raw:
+        if g is None:
+            groups.append(None)
+        elif isinstance(g, int) and not isinstance(g, bool) and 0 <= g < len(ups):
+            groups.append(g)
+        else:
+            raise RequestError("a group points to a sample that is not loaded")
+    n = body.get("variations", C.DEFAULT_VARIATIONS)
+    amount = body.get("amount", C.DEFAULT_VARIATION_AMOUNT)
+    if not isinstance(n, int) or not C.MIN_VARIATIONS <= n <= C.MAX_VARIATIONS:
+        raise RequestError(f"variations must be {C.MIN_VARIATIONS} to {C.MAX_VARIATIONS}")
+    if not isinstance(amount, (int, float)) or not 0 <= amount <= 100:
+        raise RequestError("variation amount must be 0 to 100")
+    seed = body.get("seed")
+    if seed is None:
+        seed = secrets.randbelow(2 ** 31)
+    if not isinstance(seed, int) or isinstance(seed, bool) or not 0 <= seed < 2 ** 63:
+        raise RequestError("seed must be a whole number")
     settings = Settings(sound_type=sound_type, sample_rate=int(rate), trims_db=trims)
-    return settings, ups, KeepMap(cells)
+    return GenerateRequest(settings, ups, groups, n, float(amount), seed)
 
 
-def run_generate(job: Job, settings: Settings, ups: list[Upload], keepmap: KeepMap, root: Path,
+def run_generate(job: Job, req: GenerateRequest, root: Path,
                  make_project: Callable[[Path, str], Path],
                  register_file: Callable[[Path], str]) -> None:
-    """Job body: decode, plan the base variation, render, write the project folder."""
+    """Job body: decode, plan and pick the variations, write the project folder."""
     try:
         t0 = time.perf_counter()
-        job.update(progress=0.05, message="Reading samples...")
+        settings, ups = req.settings, req.uploads
+        job.update(progress=0.02, message="Reading samples...")
         decoded = [read_audio(u.data) for u in ups]
         inputs = prepare_inputs(decoded, settings.sample_rate)
         proj = make_project(root, settings.sound_type)
-        for i, u in enumerate(ups, 1):
-            (proj / "inputs" / f"input{i}{u.ext}").write_bytes(u.data)
-        job.update(progress=0.2, message="Planning...")
-        cache = BandCache()
+        files = [f"inputs/input{i}{u.ext}" for i, u in enumerate(ups, 1)]
+        for f, u in zip(files, ups):
+            (proj / f).write_bytes(u.data)
+        keepmap = group_keepmap(settings.sound_type, len(ups), req.groups)
         names = [u.name for u in ups]
-        recipe = plan_base(inputs, names, keepmap, settings, cache=cache)
-        job.update(progress=0.6, message="Rendering...")
-        res = render(recipe, inputs, cache=cache)
+        result = generate(inputs, names, keepmap, settings, req.variations, req.amount, req.seed,
+                          progress=lambda f, m: job.update(progress=0.02 + 0.9 * f, message=m))
         sr = settings.sample_rate
-        v_wav = proj / "variations" / "v01.wav"
-        v_wav.write_bytes(wav_bytes(res.audio, sr))
-        (proj / "variations" / "v01.json").write_text(json.dumps(recipe.to_dict(), indent=1))
-        job.update(progress=0.85, message="Rendering the simple stack...")
-        stack = render_simple_stack(recipe, inputs)
-        s_wav = proj / "simple_stack.wav"
-        s_wav.write_bytes(wav_bytes(stack, sr))
+        cards = []
+        for k, v in enumerate(result.variations, 1):
+            for spec, f in zip(v.recipe.inputs, files):
+                spec.file = f
+            name = f"v{k:02d}"
+            wav = proj / "variations" / f"{name}.wav"
+            wav.write_bytes(wav_bytes(v.audio, sr))
+            wav.with_suffix(".json").write_text(json.dumps(v.recipe.to_dict(), indent=1))
+            cards.append({"name": name, "file": register_file(wav), "seconds": v.audio.shape[1] / sr,
+                          "candidate": v.recipe.candidate})
+        job.update(progress=0.95, message="Rendering the simple stack...")
+        stack_file = None
+        if result.variations:
+            stack = render_simple_stack(result.variations[0].recipe, inputs)
+            s_wav = proj / "simple_stack.wav"
+            s_wav.write_bytes(wav_bytes(stack, sr))
+            stack_file = register_file(s_wav)
         project = {
             "app_version": __version__,
             "sound_type": settings.sound_type,
             "sample_rate": sr,
-            "seed": recipe.seed,
-            "inputs": [{"file": f"inputs/input{i}{u.ext}", "name": u.name, "trim_db": t}
-                       for i, (u, t) in enumerate(zip(ups, settings.trims_db), 1)],
+            "seed": req.seed,
+            "variations": req.variations,
+            "variation_amount": req.amount,
+            "groups": {g: (None if c is None else c + 1) for g, c in zip(GROUP_NAMES, req.groups)},
+            "inputs": [{"file": f, "name": u.name, "trim_db": t}
+                       for f, u, t in zip(files, ups, settings.trims_db)],
             "keepmap": keepmap.to_dict(),
+            "notes": result.notes,
         }
         (proj / "project.json").write_text(json.dumps(project, indent=1))
-        job.update(status="done", progress=1.0,
-                   message=f"Done in {time.perf_counter() - t0:.1f} s",
-                   result={"project": proj.name,
-                           "variations": [{"name": "v01", "file": register_file(v_wav),
-                                           "seconds": res.audio.shape[1] / sr}],
-                           "stack": register_file(s_wav), "sample_rate": sr})
+        msg = f"{len(cards)} variation{'s' if len(cards) != 1 else ''} in {time.perf_counter() - t0:.1f} s"
+        job.update(status="done", progress=1.0, message=msg,
+                   result={"project": proj.name, "variations": cards, "stack": stack_file,
+                           "sample_rate": sr, "seed": req.seed, "notes": result.notes})
     except Exception as exc:  # report to the page in plain words
         job.update(status="error", error=f"{type(exc).__name__}: {exc}", message="Generate failed")
         traceback.print_exc()

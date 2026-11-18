@@ -7,9 +7,11 @@ import time
 from pathlib import Path
 
 
-def workspace_root() -> Path:
-    env = os.environ.get("LAYERFORGE_HOME")
-    root = Path(env).expanduser() if env else Path.home() / "Layerforge"
+def workspace_root(root: Path | None = None) -> Path:
+    """The workspace folder (created with its sub-folders if needed)."""
+    if root is None:
+        env = os.environ.get("LAYERFORGE_HOME")
+        root = Path(env).expanduser() if env else Path.home() / "Layerforge"
     for sub in ("Projects", "Favourites"):
         (root / sub).mkdir(parents=True, exist_ok=True)
     return root

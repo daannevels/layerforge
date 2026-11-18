@@ -27,7 +27,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from layerforge import __version__
 from layerforge.audio_io import AudioError, read_audio
 from layerforge.engine import constants as C
-from layerforge.engine.presets import PRESETS, ZONE_NAMES
+from layerforge.engine.presets import GROUP_NAMES, PRESETS, ZONE_NAMES
 from layerforge.server.jobs import Job, RequestError, Upload, new_job_id, parse_request, run_generate
 from layerforge.server.workspace import new_project_dir, workspace_root
 
@@ -65,8 +65,9 @@ class App:
 
     @property
     def root(self) -> Path:
-        if self._root is None:
-            self._root = workspace_root()
+        if not getattr(self, "_root_ready", False):
+            self._root = workspace_root(self._root)
+            self._root_ready = True
         return self._root
 
     def token_ok(self, candidate: str | None) -> bool:
@@ -91,9 +92,14 @@ def presets_payload() -> dict:
         "max_inputs": C.MAX_INPUTS,
         "max_upload_bytes": MAX_UPLOAD_BYTES,
         "extensions": list(ALLOWED_UPLOAD_EXTENSIONS),
-        "keep_strength_min": C.KEEP_STRENGTH_MIN,
+        "groups": list(GROUP_NAMES),
+        "variations": {"min": C.MIN_VARIATIONS, "max": C.MAX_VARIATIONS, "default": C.DEFAULT_VARIATIONS},
+        "amount_default": C.DEFAULT_VARIATION_AMOUNT,
         "types": {k: {"bands": list(p.band_names), "band_edges_hz": list(p.band_edges_hz),
-                      "zone_edges_ms": list(p.zone_edges_ms)} for k, p in PRESETS.items()},
+                      "zone_edges_ms": list(p.zone_edges_ms),
+                      "groups": [[p.band_names[b] for b in range(len(p.band_names)) if p.band_groups[b] == g]
+                                 for g in range(len(GROUP_NAMES))]}
+                  for k, p in PRESETS.items()},
     }
 
 
@@ -174,6 +180,13 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     self._json(HTTPStatus.OK, job.snapshot())
             elif path.startswith("/api/file/"):
                 self._send_file(path.rsplit("/", 1)[1], query)
+            elif path.startswith("/api/recipe/"):
+                wav = self._known_file(path.rsplit("/", 1)[1])
+                rec = wav.with_suffix(".json") if wav else None
+                if rec is None or not rec.is_file():
+                    self._error(HTTPStatus.NOT_FOUND, "unknown recipe")
+                else:
+                    self._send(HTTPStatus.OK, rec.read_bytes(), "application/json")
             elif path in STATIC_FILES:
                 name, ctype = STATIC_FILES[path]
                 self._send(HTTPStatus.OK, _read_static(name), ctype)
@@ -182,8 +195,11 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
 
         do_HEAD = do_GET
 
+        def _known_file(self, fid: str) -> Path | None:
+            return app.files.get(fid) if ID_RE.match(fid) else None
+
         def _send_file(self, fid: str, query: dict[str, list[str]]) -> None:
-            path = app.files.get(fid) if ID_RE.match(fid) else None
+            path = self._known_file(fid)
             if path is None or not path.is_file():
                 self._error(HTTPStatus.NOT_FOUND, "unknown file")
                 return
@@ -202,6 +218,12 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 self._upload()
             elif path == "/api/generate":
                 self._generate()
+            elif path == "/api/star":
+                self._star()
+            elif path == "/api/open-folder":
+                ok = open_folder(app.root)
+                self._json(HTTPStatus.OK if ok else HTTPStatus.INTERNAL_SERVER_ERROR,
+                           {"ok": ok, "path": str(app.root)})
             else:
                 self._error(HTTPStatus.NOT_FOUND, "not found")
 
@@ -234,7 +256,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 return
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")
-                settings, ups, keepmap = parse_request(body, app.uploads)
+                req = parse_request(body, app.uploads)
             except (json.JSONDecodeError, RequestError, AttributeError, TypeError, ValueError) as exc:
                 self._error(HTTPStatus.BAD_REQUEST, str(exc) or "bad request")
                 return
@@ -242,11 +264,49 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             with app.lock:
                 app.jobs[job.id] = job
             threading.Thread(target=run_generate, daemon=True,
-                             args=(job, settings, ups, keepmap, app.root, new_project_dir,
-                                   app.register_file)).start()
-            self._json(HTTPStatus.OK, {"job": job.id})
+                             args=(job, req, app.root, new_project_dir, app.register_file)).start()
+            self._json(HTTPStatus.OK, {"job": job.id, "seed": req.seed})
+
+        def _star(self) -> None:
+            length = self._length(MAX_JSON_BYTES)
+            if length is None:
+                return
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+                fid, on = str(body["file"]), bool(body["on"])
+            except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
+                self._error(HTTPStatus.BAD_REQUEST, "bad request")
+                return
+            wav = self._known_file(fid)
+            if wav is None or not wav.is_file() or wav.parent.name != "variations":
+                self._error(HTTPStatus.NOT_FOUND, "unknown file")
+                return
+            fav = app.root / "Favourites" / f"{wav.parent.parent.name}_{wav.name}"
+            if on:
+                fav.write_bytes(wav.read_bytes())
+            elif fav.is_file():
+                fav.unlink()
+            self._json(HTTPStatus.OK, {"ok": True, "starred": on})
 
     return Handler
+
+
+def open_folder(path: Path) -> bool:
+    """Show the workspace folder in Finder / Explorer / the Linux file manager."""
+    import os
+    import subprocess
+    import sys
+
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except OSError:
+        return False
 
 
 def make_server(app: App, port: int = 8766, tries: int = 20) -> ThreadingHTTPServer:
