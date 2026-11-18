@@ -229,3 +229,42 @@ def test_low_end_has_one_owner_high_bands_mix():
     assert [o.input for o in recipe.cells[1][1]] == [0]          # Body (upper edge 200 Hz)
     w = {o.input: o.weight for o in recipe.cells[2][1]}           # Mids: mixed 2:1
     assert w[0] == pytest.approx(2 / 3) and w[1] == pytest.approx(1 / 3)
+
+
+# --- crossover check ------------------------------------------------------------
+def test_crossover_check_fixes_inverted_neighbour():
+    sr = 48000
+    k1 = padded(make_kick(seed=1), sr)[None]
+    k2 = -padded(make_kick(seed=1), sr)[None] * 0.9   # the same kick, inverted
+    km = KeepMap.empty(2, 5)
+    for z in range(3):
+        for b in (0, 1):
+            km.cells[0][b][z] = Cell("keep")
+        for b in (2, 3, 4):
+            km.cells[1][b][z] = Cell("keep")
+    recipe = plan_base([k1, k2], ["a", "b"], km, Settings())
+    info = recipe.notes["crossover"]["1|2"]
+    assert info["R_before"] < 0.5 and info["R_after"] > 1.5
+    assert recipe.polarities[2][1] == -1
+    off = plan_base([k1, k2], ["a", "b"], km, Settings(crossover_check=False))
+    assert off.polarities[2][1] == 1
+
+
+# --- end to end ---------------------------------------------------------------
+@pytest.mark.parametrize("stype", sorted(PRESETS))
+@pytest.mark.parametrize("stereo", [False, True])
+def test_render_every_type(stype, stereo):
+    from tests.fixtures import GENERATORS
+    sr = 44100
+    ins = []
+    for k in range(3):
+        x = np.concatenate([np.zeros(150 * k), GENERATORS[stype](seed=k + 1, sr=sr)])
+        ins.append(np.stack([x, 0.8 * x]) if stereo else x[None])
+    km = KeepMap.empty(3, len(PRESETS[stype].band_names))
+    recipe = plan_base(ins, ["a", "b", "c"], km, Settings(sound_type=stype, sample_rate=sr))
+    res = render(recipe, ins)
+    assert res.audio.shape[0] == (2 if stereo else 1)
+    assert np.all(np.isfinite(res.audio))
+    assert db(true_peak(res.audio)) == pytest.approx(-0.3, abs=0.05)
+    again = render(type(recipe).from_dict(recipe.to_dict()), ins)
+    assert np.array_equal(res.audio, again.audio)   # recipe round trip renders identically

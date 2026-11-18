@@ -1,7 +1,6 @@
 """`layerforge selftest`: a quick end-to-end check in plain English.
 
-M1 stub: checks that the dependencies load, the presets are sane and the synthetic
-samples can be made. Later milestones run the whole pipeline here.
+Runs the whole pipeline on synthetic samples (no files of the user are touched).
 """
 
 from __future__ import annotations
@@ -36,10 +35,45 @@ def _check_synth() -> str:
     return f"{len(GENERATORS)} synthetic test sounds made"
 
 
+def _check_bands() -> str:
+    from layerforge.engine.bands import split_bands
+    from layerforge.synth import make_kick
+    x = np.concatenate([np.zeros(2400), make_kick()])
+    err = np.max(np.abs(split_bands(x, (60, 200, 1200, 6000), 48000).sum(axis=0) - x))
+    assert err < 1e-6, err
+    return f"the bands add up to the original (error {20 * np.log10(max(err, 1e-300)):.0f} dB)"
+
+
+def _check_render() -> str:
+    from layerforge.audio_io import read_audio, wav_bytes
+    from layerforge.engine.planner import plan_base
+    from layerforge.engine.post import true_peak
+    from layerforge.engine.presets import PRESETS
+    from layerforge.engine.render import render, render_simple_stack
+    from layerforge.engine.types import Cell, KeepMap, Settings
+    from layerforge.synth import GENERATORS
+    for stype, gen in GENERATORS.items():
+        for sr in (44100, 48000):
+            ins = [np.concatenate([np.zeros(120 * k), gen(seed=k + 1, sr=sr)])[None] for k in range(3)]
+            km = KeepMap.empty(3, len(PRESETS[stype].band_names))
+            km.cells[0][1] = [Cell("keep") for _ in range(3)]
+            recipe = plan_base(ins, ["a", "b", "c"], km, Settings(sound_type=stype, sample_rate=sr))
+            y = render(recipe, ins).audio
+            assert np.all(np.isfinite(y)), stype
+            tp = 20 * np.log10(true_peak(y))
+            assert abs(tp + 0.3) < 0.05, (stype, tp)
+            back, sr2 = read_audio(wav_bytes(y, sr))
+            assert sr2 == sr and back.shape == y.shape, stype
+            assert np.all(np.isfinite(render_simple_stack(recipe, ins)))
+    return f"blended {len(GENERATORS)} sound types at 44.1 and 48 kHz into valid 24-bit WAVs"
+
+
 CHECKS: list[tuple[str, Callable[[], str]]] = [
     ("Dependencies", _check_imports),
     ("Presets", _check_presets),
     ("Synthetic sounds", _check_synth),
+    ("Band split", _check_bands),
+    ("Blend engine", _check_render),
 ]
 
 

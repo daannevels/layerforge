@@ -53,8 +53,8 @@ Phase 2 = a JUCE/VST3 port in C++, so the engine must stay portable. The full br
 - CI: `.github/workflows/tests.yml` runs pytest + selftest on ubuntu and windows (no macOS runner available; Daan tests macOS by hand).
 
 ## Milestones
-- M1 Skeleton (layout, uv, launchers, CI, fixtures, selftest stub, "Layerforge works" page) — done, awaiting OK
-- M2 Engine (sections 4–5) + first sound (minimal UI, base variation, compare with simple stack)
+- M1 Skeleton (layout, uv, launchers, CI, fixtures, selftest stub, "Layerforge works" page) — done ✅
+- M2 Engine (sections 4–5) + first sound (minimal UI, base variation, compare with simple stack) — done, awaiting OK
 - M3 Variations (planner, quality gate, selection, results grid, workspace, `render`)
 - M4 Editing and listening tools (spectrogram/waveform editing, solo, mono, loop, A/B, Advanced)
 - M5 Polish and port-readiness (README, ENGINE_SPEC, PROJECT_SUMMARY, golden vectors, tag v0.1.0)
@@ -63,3 +63,20 @@ Phase 2 = a JUCE/VST3 port in C++, so the engine must stay portable. The full br
 - Synthetic generators live in `src/layerforge/synth.py` (not only in tests) so `layerforge selftest`
   works from an installed copy; `tests/fixtures.py` re-exports them.
 - Default UI port 8766 (loopforge uses 8765), next free port if taken.
+- Zone time 0 (`Recipe.origin`) = the earliest onset after anchor alignment. Anchor alignment delays
+  every input to the latest anchor (shifts >= 0), so nothing is cut at the start.
+- `planner.plan_base` receives the input audio (it needs band signals for cell energies and
+  alignment); `render` uses only numbers from the recipe. Alignment lags/polarities are stored in
+  the recipe per band and input.
+- Per-band alignment reference = the owner with the most total weight in that band (ties: energy).
+- Crossover check: compares the dominant owners of two neighbouring bands; a correction moves the
+  whole upper band (all its owners) by the same lag/polarity, processed from low to high.
+- Post-chain order: subtract mean → saturation (4x FIR) → 10 Hz HP → start at zero crossing →
+  tail trim → subtract the trimmed segment's mean again (decaying kicks carry a small DC) → fades →
+  true-peak scale. Saturation runs before the fades so the FIR cannot smear the faded edges.
+- Tail threshold is -70 dB relative to the output peak (= dBFS after normalisation).
+- Mono-or-stereo: if any input is stereo, all are stereo. Inputs with >2 channels keep the first two.
+- UI playback is loudness-matched: every sound is played at -20 dB RMS over its first 200 ms
+  (gain capped at +12 dB). Changing the sound type resets the keep-map grids.
+- Uploads are kept in memory by the server; Generate copies them to `Projects/<id>/inputs/inputN.ext`
+  (the original names only go into project.json).
