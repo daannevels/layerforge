@@ -6,29 +6,39 @@ Security rules (see CLAUDE.md):
   and required on every /api/ call (header X-Layerforge-Token, or ?token= for links);
 - every request whose Host header is not exactly 127.0.0.1:<port> is rejected;
 - static files come from a fixed whitelist, never from paths built from client input;
-- uploads (milestone M2) accept only wav/aiff/flac up to MAX_UPLOAD_BYTES.
+  generated files are addressed by random server-made ids;
+- uploads accept only wav/aiff/flac up to MAX_UPLOAD_BYTES.
 """
 
 from __future__ import annotations
 
 import hmac
 import json
+import re
 import secrets
 import threading
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
-from urllib.parse import parse_qs, urlsplit
+from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from layerforge import __version__
+from layerforge.audio_io import AudioError, read_audio
+from layerforge.engine import constants as C
+from layerforge.engine.presets import PRESETS, ZONE_NAMES
+from layerforge.server.jobs import Job, RequestError, Upload, new_job_id, parse_request, run_generate
+from layerforge.server.workspace import new_project_dir, workspace_root
 
 HOST = "127.0.0.1"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024          # bytes: largest accepted upload (50 MB)
+MAX_JSON_BYTES = 1024 * 1024                 # bytes: largest accepted JSON request
 ALLOWED_UPLOAD_EXTENSIONS = (".wav", ".aif", ".aiff", ".flac")
 TOKEN_HEADER = "X-Layerforge-Token"
+ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
-# URL path -> (file in layerforge/web, content type). The only files the server will ever send.
+# URL path -> (file in layerforge/web, content type). The only static files the server sends.
 STATIC_FILES: dict[str, tuple[str, str]] = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
@@ -44,15 +54,47 @@ def _read_static(name: str) -> bytes:
 class App:
     """State shared by all request handlers of one server."""
 
-    def __init__(self, token: str | None = None) -> None:
+    def __init__(self, token: str | None = None, root: Path | None = None) -> None:
         self.token = token or secrets.token_urlsafe(24)
         self.port = 0  # set once the socket is bound
+        self._root = root
+        self.lock = threading.Lock()
+        self.uploads: dict[str, Upload] = {}
+        self.jobs: dict[str, Job] = {}
+        self.files: dict[str, Path] = {}   # random id -> file the server wrote itself
+
+    @property
+    def root(self) -> Path:
+        if self._root is None:
+            self._root = workspace_root()
+        return self._root
 
     def token_ok(self, candidate: str | None) -> bool:
         return candidate is not None and hmac.compare_digest(candidate.encode(), self.token.encode())
 
     def host_ok(self, host_header: str | None) -> bool:
         return host_header == f"{HOST}:{self.port}"
+
+    def register_file(self, path: Path) -> str:
+        fid = new_job_id()
+        with self.lock:
+            self.files[fid] = path
+        return fid
+
+
+def presets_payload() -> dict:
+    return {
+        "version": __version__,
+        "zones": list(ZONE_NAMES),
+        "rates": list(C.OUTPUT_RATES),
+        "min_inputs": C.MIN_INPUTS,
+        "max_inputs": C.MAX_INPUTS,
+        "max_upload_bytes": MAX_UPLOAD_BYTES,
+        "extensions": list(ALLOWED_UPLOAD_EXTENSIONS),
+        "keep_strength_min": C.KEEP_STRENGTH_MIN,
+        "types": {k: {"bands": list(p.band_names), "band_edges_hz": list(p.band_edges_hz),
+                      "zone_edges_ms": list(p.zone_edges_ms)} for k, p in PRESETS.items()},
+    }
 
 
 def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
@@ -64,7 +106,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             pass
 
         # --- helpers -----------------------------------------------------
-        def _send(self, status: int, body: bytes, ctype: str) -> None:
+        def _send(self, status: int, body: bytes, ctype: str, extra: dict[str, str] | None = None) -> None:
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
@@ -73,6 +115,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("Content-Security-Policy",
                              "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:")
+            for k, v in (extra or {}).items():
+                self.send_header(k, v)
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
@@ -97,32 +141,110 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     return None
             return parts.path, query
 
+        def _length(self, limit: int) -> int | None:
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = -1
+            if length < 0:
+                self._error(HTTPStatus.BAD_REQUEST, "bad Content-Length")
+                return None
+            if length > limit:
+                self.close_connection = True
+                self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                            "file is larger than 50 MB" if limit == MAX_UPLOAD_BYTES else "request too large")
+                return None
+            return length
+
         # --- routes ------------------------------------------------------
         def do_GET(self) -> None:
             guarded = self._guard()
             if guarded is None:
                 return
-            path, _query = guarded
+            path, query = guarded
             if path == "/api/health":
                 self._json(HTTPStatus.OK, {"ok": True, "version": __version__})
-                return
-            if path in STATIC_FILES:
+            elif path == "/api/presets":
+                self._json(HTTPStatus.OK, presets_payload())
+            elif path.startswith("/api/jobs/"):
+                job = app.jobs.get(path.rsplit("/", 1)[1])
+                if job is None:
+                    self._error(HTTPStatus.NOT_FOUND, "unknown job")
+                else:
+                    self._json(HTTPStatus.OK, job.snapshot())
+            elif path.startswith("/api/file/"):
+                self._send_file(path.rsplit("/", 1)[1], query)
+            elif path in STATIC_FILES:
                 name, ctype = STATIC_FILES[path]
                 self._send(HTTPStatus.OK, _read_static(name), ctype)
-                return
-            self._error(HTTPStatus.NOT_FOUND, "not found")
+            else:
+                self._error(HTTPStatus.NOT_FOUND, "not found")
 
         do_HEAD = do_GET
+
+        def _send_file(self, fid: str, query: dict[str, list[str]]) -> None:
+            path = app.files.get(fid) if ID_RE.match(fid) else None
+            if path is None or not path.is_file():
+                self._error(HTTPStatus.NOT_FOUND, "unknown file")
+                return
+            extra = {}
+            if query.get("download"):
+                project = path.parent.parent.name if path.parent.name == "variations" else path.parent.name
+                extra["Content-Disposition"] = f'attachment; filename="layerforge_{project}_{path.name}"'
+            self._send(HTTPStatus.OK, path.read_bytes(), "audio/wav", extra)
 
         def do_POST(self) -> None:
             guarded = self._guard()
             if guarded is None:
                 return
-            length = int(self.headers.get("Content-Length") or 0)
-            if length > MAX_UPLOAD_BYTES:
-                self._error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "file is larger than 50 MB")
+            path, _query = guarded
+            if path == "/api/upload":
+                self._upload()
+            elif path == "/api/generate":
+                self._generate()
+            else:
+                self._error(HTTPStatus.NOT_FOUND, "not found")
+
+        def _upload(self) -> None:
+            length = self._length(MAX_UPLOAD_BYTES)
+            if length is None:
                 return
-            self._error(HTTPStatus.NOT_FOUND, "not found")
+            name = unquote(self.headers.get("X-Filename") or "")[:200]
+            ext = Path(name).suffix.lower()
+            if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+                self.close_connection = True
+                self._error(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "only WAV, AIFF and FLAC files can be loaded")
+                return
+            data = self.rfile.read(length)
+            try:
+                x, sr = read_audio(data)
+            except AudioError as exc:
+                self._error(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            uid = new_job_id()
+            with app.lock:
+                app.uploads[uid] = Upload(name=Path(name).name, ext=ext, data=data, sample_rate=sr,
+                                          channels=x.shape[0], frames=x.shape[1])
+            self._json(HTTPStatus.OK, {"id": uid, "name": Path(name).name, "sample_rate": sr,
+                                       "channels": int(x.shape[0]), "seconds": x.shape[1] / sr})
+
+        def _generate(self) -> None:
+            length = self._length(MAX_JSON_BYTES)
+            if length is None:
+                return
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+                settings, ups, keepmap = parse_request(body, app.uploads)
+            except (json.JSONDecodeError, RequestError, AttributeError, TypeError, ValueError) as exc:
+                self._error(HTTPStatus.BAD_REQUEST, str(exc) or "bad request")
+                return
+            job = Job(id=new_job_id())
+            with app.lock:
+                app.jobs[job.id] = job
+            threading.Thread(target=run_generate, daemon=True,
+                             args=(job, settings, ups, keepmap, app.root, new_project_dir,
+                                   app.register_file)).start()
+            self._json(HTTPStatus.OK, {"job": job.id})
 
     return Handler
 
@@ -145,7 +267,7 @@ def serve(port: int = 8766, open_browser: bool = True) -> None:
     app = App()
     httpd = make_server(app, port)
     url = f"http://{HOST}:{app.port}/?token={app.token}"
-    print(f"Layerforge {__version__} is running.")
+    print(f"Layerforge {__version__} is running. Your files: {app.root}")
     print(f"Open this address in your browser if it did not open by itself:\n  {url}")
     print("Keep this window open while you use Layerforge. Close it to quit.")
     if open_browser:
