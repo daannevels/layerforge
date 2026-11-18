@@ -1,7 +1,7 @@
-"""All engine constants in one place. Each has a unit in its comment.
+"""All global engine constants in one place. Each has a unit in its comment.
 
 These are starting values (literature + reasoning), meant to be tuned by ear.
-Milestone M2 fills in the rest of the render pipeline constants.
+Per-sound-type values (band edges, zone edges, default drive) live in presets.py.
 """
 
 # --- Workflow limits -------------------------------------------------------
@@ -11,11 +11,72 @@ MIN_VARIATIONS = 1             # count
 MAX_VARIATIONS = 16            # count
 DEFAULT_VARIATIONS = 8         # count
 DEFAULT_VARIATION_AMOUNT = 50  # percent (0..100)
+OUTPUT_RATES = (44100, 48000)  # Hz: supported output sample rates
 
-# --- Supported output sample rates ----------------------------------------
-OUTPUT_RATES = (44100, 48000)  # Hz
+# --- Step 1: analysis --------------------------------------------------------
+ONSET_THRESHOLD = 0.10         # fraction of peak |x|: first sample at or above this is the rough onset
+ONSET_QUIET = 0.02             # fraction of peak |x|: walk back to the last sample below this
+ONSET_MAX_WALKBACK_MS = 5.0    # ms: walk back at most this far
+DECAY_DB = -30.0               # dB re envelope peak: decay time is measured down to this level
+ENVELOPE_MS = 5.0              # ms: RMS window for the decay envelope
+ATTACK_ENVELOPE_MS = 1.0       # ms: RMS window for the attack-time envelope
+ATTACK_LOW = 0.10              # fraction of envelope peak: attack time starts here
+ATTACK_HIGH = 0.90             # fraction of envelope peak: attack time ends here
 
-# --- Keep-map --------------------------------------------------------------
+# --- Step 2: level match --------------------------------------------------------
+LEVEL_MATCH_LIMIT_DB = 12.0    # dB: level-match gain is clamped to +- this
+TRIM_LIMIT_DB = 12.0           # dB: per-sample trim range is +- this
+
+# --- Step 4: band split ---------------------------------------------------------
+FILTER_ORDER_DEFAULT = 2       # Butterworth order of each LP/HP section (Advanced: 1, 2 or 3)
+FILTER_ORDERS = (1, 2, 3)      # allowed filter orders
+FILTER_PAD_S = 0.3             # s: zeros added on both sides before forward-backward filtering
+
+# --- Step 5: onset guard --------------------------------------------------------
+GUARD_MS_DEFAULT = 1.0         # ms: raised-cosine fade-in length that ends at the onset
+
+# --- Step 6: time-zone windows -------------------------------------------------
+CROSSFADE_PERIODS = 0.5        # periods of the band's lowest frequency used as crossfade width
+CROSSFADE_MIN_FREQ_HZ = 30.0   # Hz: f_low used for the lowest band (whose lower edge is 0)
+CROSSFADE_MIN_MS = 1.0         # ms: shortest zone crossfade
+CROSSFADE_MAX_MS = 20.0        # ms: longest zone crossfade
+
+# --- Keep-map ------------------------------------------------------------------
 KEEP_STRENGTH_MIN = 0.25       # fraction: weakest keep strength (25 %)
 KEEP_STRENGTH_DEFAULT = 1.0    # fraction: default keep strength (100 %)
-LOW_END_SINGLE_OWNER_HZ = 200.0  # Hz: bands with upper edge <= this get exactly one owner
+LOW_END_SINGLE_OWNER_HZ = 200.0  # Hz: bands whose upper edge is <= this get exactly one owner
+
+# --- Step 7: alignment ----------------------------------------------------------
+ALIGN_MAX_LAG_MS = 1.5         # ms: lag search range is +- this
+ALIGN_WINDOW_MS = 150.0        # ms: energy of the sum is measured over this window after the zone origin
+ALIGN_MIN_GAIN_DB = 0.5        # dB: an alignment is applied only if it raises the sum energy this much
+CROSSOVER_R_MIN = 0.5          # ratio: crossover check acts when E(a+b)/(E(a)+E(b)) is below this
+CROSSOVER_OCTAVES = 1.0        # octaves: width of the band-pass around a shared band edge
+RELAXED_MIN_HZ = 2000.0        # Hz: relaxed types skip per-band alignment in bands whose lower edge >= this
+
+# --- Step 9: stereo -------------------------------------------------------------
+MONO_BELOW_HZ = 120.0          # Hz: the Side channel is high-passed here (output is mono below)
+MONO_FILTER_ORDER = 2          # Butterworth order of the Side high-pass (run forward-backward)
+
+# --- Step 10: post chain ------------------------------------------------------
+POST_HP_HZ = 10.0              # Hz: zero-phase DC/subsonic high-pass
+POST_HP_ORDER = 2              # Butterworth order of that high-pass
+START_PREROLL_MS = 1.0         # ms: the file starts at the zero crossing nearest to onset minus this
+START_SEARCH_MS = 1.0          # ms: zero crossings are searched within +- this of that point
+FADE_IN_MAX_MS = 1.0           # ms: longest raised-cosine fade-in at the file start
+TAIL_THRESHOLD_DB = -70.0      # dB re output peak (= dBFS after normalisation): tail silence level
+TAIL_HOLD_MS = 50.0            # ms: the envelope must stay below the threshold this long to trim
+FADE_OUT_MS = 10.0             # ms: raised-cosine fade-out at the end
+FADE_OUT_MIN_MS = 5.0          # ms: the fade-out is never shorter than this
+DRIVE_MAX_DB = 6.0             # dB: largest saturation drive
+TRUE_PEAK_DBFS = -0.3          # dBFS: target true peak of the output
+
+# --- Oversampling FIR (saturation and true-peak) -------------------------------
+OVERSAMPLE = 4                 # factor
+FIR_HALF_TAPS = 64             # input-rate samples on each side of the kernel centre
+FIR_KAISER_BETA = 9.0          # Kaiser window parameter
+FIR_CUTOFF = 0.95              # fraction of the input-rate Nyquist frequency
+
+# --- Output ---------------------------------------------------------------------
+OUTPUT_SUBTYPE = "PCM_24"      # WAV sample format
+RECIPE_SCHEMA_VERSION = 1      # bump when the recipe format changes
