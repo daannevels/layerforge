@@ -69,6 +69,58 @@ class GenerateRequest:
     seed: int
 
 
+def _num(v: object, name: str) -> float:
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not np.isfinite(v):
+        raise RequestError(f"{name} must be a number")
+    return float(v)
+
+
+def parse_advanced(adv: dict, sound_type: str, sr: int) -> dict:
+    """Validate the editable settings (band edges, zone edges, Advanced panel). Missing = default."""
+    if not isinstance(adv, dict):
+        raise RequestError("bad advanced settings")
+    p = PRESETS[sound_type]
+    out: dict = {}
+    if adv.get("band_edges_hz") is not None:
+        e = adv["band_edges_hz"]
+        if not isinstance(e, list) or len(e) != len(p.band_edges_hz):
+            raise RequestError("wrong number of band edges")
+        e = [_num(v, "band edge") for v in e]
+        if not (C.EDIT_EDGE_MIN_HZ <= e[0] and e[-1] <= C.BAND_EDGE_MAX_FRACTION * sr):
+            raise RequestError("band edges out of range")
+        if any(b < a * C.EDIT_EDGE_MIN_RATIO for a, b in zip(e[:-1], e[1:])):
+            raise RequestError("band edges are too close together")
+        out["band_edges_hz"] = e
+    if adv.get("zone_edges_ms") is not None:
+        z = adv["zone_edges_ms"]
+        if not isinstance(z, list) or len(z) != 2:
+            raise RequestError("need two zone edges")
+        z = [_num(v, "zone edge") for v in z]
+        if not (C.EDIT_ZONE_MIN_MS <= z[0] < z[1] <= C.EDIT_ZONE_MAX_MS):
+            raise RequestError("zone edges out of range")
+        out["zone_edges_ms"] = z
+    if adv.get("filter_order") is not None:
+        if adv["filter_order"] not in C.FILTER_ORDERS:
+            raise RequestError("filter order must be 1, 2 or 3")
+        out["filter_order"] = int(adv["filter_order"])
+    if adv.get("guard_ms") is not None:
+        g = _num(adv["guard_ms"], "guard length")
+        if not 0 <= g <= C.EDIT_GUARD_MAX_MS:
+            raise RequestError("guard length out of range")
+        out["guard_ms"] = g
+    if adv.get("drive_db") is not None:
+        d = _num(adv["drive_db"], "saturation drive")
+        if not 0 <= d <= C.DRIVE_MAX_DB:
+            raise RequestError("saturation drive out of range")
+        out["drive_db"] = d
+    for key in ("relaxed_alignment", "crossover_check"):
+        if adv.get(key) is not None:
+            if not isinstance(adv[key], bool):
+                raise RequestError(f"{key} must be true or false")
+            out[key] = adv[key]
+    return out
+
+
 def parse_request(body: dict, uploads: dict[str, Upload]) -> GenerateRequest:
     if not isinstance(body, dict):
         raise RequestError("bad request")
@@ -112,7 +164,8 @@ def parse_request(body: dict, uploads: dict[str, Upload]) -> GenerateRequest:
         seed = secrets.randbelow(2 ** 31)
     if not isinstance(seed, int) or isinstance(seed, bool) or not 0 <= seed < 2 ** 63:
         raise RequestError("seed must be a whole number")
-    settings = Settings(sound_type=sound_type, sample_rate=int(rate), trims_db=trims)
+    settings = Settings(sound_type=sound_type, sample_rate=int(rate), trims_db=trims,
+                        **parse_advanced(body.get("advanced") or {}, sound_type, int(rate)))
     return GenerateRequest(settings, ups, groups, n, float(amount), seed)
 
 

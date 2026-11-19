@@ -75,3 +75,10 @@ def wav_bytes(x: np.ndarray, sr: int) -> bytes:
 
 def write_wav(path: str | Path, x: np.ndarray, sr: int) -> None:
     Path(path).write_bytes(wav_bytes(x, sr))
+
+
+def wav_bytes_float(x: np.ndarray, sr: int) -> bytes:
+    """32-bit float WAV (previews in the browser; not clipped)."""
+    buf = io.BytesIO()
+    sf.write(buf, x.T, sr, subtype="FLOAT", format="WAV")
+    return buf.getvalue()

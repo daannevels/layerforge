@@ -137,6 +137,13 @@ FIR_HALF_TAPS = 24             # input-rate samples on each side of the kernel c
 FIR_KAISER_BETA = 8.0          # Kaiser window parameter (about 80 dB stop-band)
 FIR_CUTOFF = 0.90              # fraction of the input-rate Nyquist frequency
 
+# --- Editing limits (UI) ---------------------------------------------------------------
+EDIT_EDGE_MIN_HZ = 20.0        # Hz: lowest band edge the user may set
+EDIT_EDGE_MIN_RATIO = 1.2      # ratio: neighbouring user band edges at least this far apart
+EDIT_ZONE_MIN_MS = 1.0         # ms: shortest Attack zone
+EDIT_ZONE_MAX_MS = 3000.0      # ms: latest Sustain|Tail edge
+EDIT_GUARD_MAX_MS = 5.0        # ms: longest onset guard
+
 # --- Output ---------------------------------------------------------------------
 OUTPUT_SUBTYPE = "PCM_24"      # WAV sample format
 RECIPE_SCHEMA_VERSION = 2      # bump when the recipe format changes (2: tonal blending fields)

@@ -205,3 +205,52 @@ def test_cleanup_keeps_newest_projects_only(tmp_path):
     assert "my own folder" in left and "20260101-000000_kick-note" in left
     assert len([n for n in left if n.endswith("_kick")]) == 20
     assert (root / "Favourites" / "keep.wav").is_file()
+
+
+def test_preview_bands_add_up_and_validate(server):
+    import io
+    import soundfile as sf
+    x = np.concatenate([np.zeros(500), make_kick(seed=3, dur=0.3)])[None] * 0.8
+    uid = json.loads(upload(server, wav_bytes(x, 48000), "k.wav")[1])["id"]
+    parts = []
+    for g in range(3):
+        status, wav = post(server, "/api/preview", {"source": uid, "sound_type": "kick",
+                                                   "select": {"kind": "group", "index": g}})
+        assert status == 200
+        parts.append(sf.read(io.BytesIO(wav))[0])
+    status, wav = post(server, "/api/preview", {"source": uid, "sound_type": "kick", "select": {"kind": "all"}})
+    full = sf.read(io.BytesIO(wav))[0]
+    assert np.max(np.abs(sum(parts) - full)) < 1e-5            # Low + Mid + High = the sample
+    status, wav = post(server, "/api/preview", {"source": uid, "sound_type": "kick", "band_edges_hz": [50, 150, 900, 5000],
+                                               "select": {"kind": "band", "index": 0}})
+    assert status == 200
+    assert post(server, "/api/preview", {"source": uid, "sound_type": "kick", "band_edges_hz": [500, 150, 900, 5000],
+                                        "select": {"kind": "band", "index": 0}})[0] == 400
+    assert post(server, "/api/preview", {"source": "nope", "sound_type": "kick"})[0] == 404
+    assert post(server, "/api/preview", {"source": uid, "sound_type": "kick", "select": {"kind": "group", "index": 9}})[0] == 400
+
+
+def test_advanced_settings_reach_the_recipe(server, tmp_path):
+    ids = []
+    for seed in (1, 2):
+        x = np.concatenate([np.zeros(500), make_kick(seed=seed, dur=0.3)])[None] * 0.8
+        ids.append(json.loads(upload(server, wav_bytes(x, 48000), f"k{seed}.wav")[1])["id"])
+    adv = {"band_edges_hz": [50, 180, 1000, 7000], "zone_edges_ms": [10, 150], "filter_order": 3,
+           "guard_ms": 2.0, "drive_db": 0.0, "relaxed_alignment": False, "crossover_check": False}
+    body = {"sound_type": "kick", "variations": 1, "amount": 0, "seed": 1, "inputs": [{"id": i, "trim_db": -3} for i in ids],
+            "groups": [None, None, None], "advanced": adv}
+    status, data = post(server, "/api/generate", body)
+    assert status == 200, data
+    job = json.loads(data)["job"]
+    for _ in range(400):
+        snap = json.loads(request(server, "GET", f"/api/jobs/{job}", TOK)[1])
+        if snap["status"] != "running":
+            break
+        time.sleep(0.05)
+    assert snap["status"] == "done", snap
+    rec = json.loads(request(server, "GET", f"/api/recipe/{snap['result']['variations'][0]['file']}?token=test-token")[1])
+    assert rec["band_edges_hz"] == [50, 180, 1000, 7000] and rec["zone_edges_ms"] == [10, 150]
+    assert rec["filter_order"] == 3 and rec["guard_ms"] == 2.0 and rec["drive_db"] == 0.0
+    for bad in ({"band_edges_hz": [50, 55, 1000, 7000]}, {"zone_edges_ms": [100, 50]}, {"filter_order": 5},
+                {"guard_ms": 9}, {"drive_db": 7}, {"crossover_check": "yes"}):
+        assert post(server, "/api/generate", dict(body, advanced=bad))[0] == 400

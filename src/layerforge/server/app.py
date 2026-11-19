@@ -29,7 +29,16 @@ from layerforge.audio_io import AudioError, read_audio
 from layerforge.engine import constants as C
 from layerforge.engine.analysis import estimate_f0, find_onset
 from layerforge.engine.presets import GROUP_NAMES, PRESETS, ZONE_NAMES
-from layerforge.server.jobs import Job, RequestError, Upload, new_job_id, parse_request, run_generate
+from layerforge.server.jobs import (
+    Job,
+    RequestError,
+    Upload,
+    new_job_id,
+    parse_advanced,
+    parse_request,
+    run_generate,
+)
+from layerforge.server.preview import PreviewError, render_preview
 from layerforge.server import feedback
 from layerforge.server.workspace import cleanup_projects, new_project_dir, workspace_root
 
@@ -98,7 +107,13 @@ def presets_payload() -> dict:
         "feedback_tags": list(feedback.TAGS),
         "variations": {"min": C.MIN_VARIATIONS, "max": C.MAX_VARIATIONS, "default": C.DEFAULT_VARIATIONS},
         "amount_default": C.DEFAULT_VARIATION_AMOUNT,
-        "types": {k: {"pitched": p.pitched, "bands": list(p.band_names), "band_edges_hz": list(p.band_edges_hz),
+        "advanced": {"filter_orders": list(C.FILTER_ORDERS), "filter_order": C.FILTER_ORDER_DEFAULT,
+                     "guard_ms": C.GUARD_MS_DEFAULT, "guard_max_ms": C.EDIT_GUARD_MAX_MS,
+                     "drive_max_db": C.DRIVE_MAX_DB, "edge_min_hz": C.EDIT_EDGE_MIN_HZ,
+                     "edge_min_ratio": C.EDIT_EDGE_MIN_RATIO, "zone_min_ms": C.EDIT_ZONE_MIN_MS,
+                     "zone_max_ms": C.EDIT_ZONE_MAX_MS},
+        "types": {k: {"pitched": p.pitched, "morph": p.morph, "drive_db": p.saturation_drive_db,
+                      "band_groups": list(p.band_groups), "bands": list(p.band_names), "band_edges_hz": list(p.band_edges_hz),
                       "zone_edges_ms": list(p.zone_edges_ms),
                       "groups": [[p.band_names[b] for b in range(len(p.band_names)) if p.band_groups[b] == g]
                                  for g in range(len(GROUP_NAMES))]}
@@ -232,6 +247,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 self._star()
             elif path == "/api/feedback":
                 self._feedback()
+            elif path == "/api/preview":
+                self._preview()
             elif path == "/api/open-folder":
                 ok = open_folder(app.root)
                 self._json(HTTPStatus.OK if ok else HTTPStatus.INTERNAL_SERVER_ERROR,
@@ -261,7 +278,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                                           channels=x.shape[0], frames=x.shape[1])
             self._json(HTTPStatus.OK, {"id": uid, "name": Path(name).name, "sample_rate": sr,
                                        "channels": int(x.shape[0]), "seconds": x.shape[1] / sr,
-                                       "f0_hz": round(estimate_f0(x, sr, find_onset(x, sr)), 2)})
+                                       "f0_hz": round(estimate_f0(x, sr, find_onset(x, sr)), 2),
+                                       "onset_ms": round(1000.0 * find_onset(x, sr) / sr, 3)})
 
         def _generate(self) -> None:
             length = self._length(MAX_JSON_BYTES)
@@ -279,6 +297,36 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             threading.Thread(target=run_generate, daemon=True,
                              args=(job, req, app.root, new_project_dir, app.register_file)).start()
             self._json(HTTPStatus.OK, {"job": job.id, "seed": req.seed})
+
+        def _preview(self) -> None:
+            length = self._length(MAX_JSON_BYTES)
+            if length is None:
+                return
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+                src = str(body["source"])
+                if src in app.uploads:
+                    audio: bytes | str = app.uploads[src].data
+                else:
+                    path = self._known_file(src)
+                    if path is None or not path.is_file():
+                        self._error(HTTPStatus.NOT_FOUND, "unknown source")
+                        return
+                    audio = str(path)
+                stype = str(body["sound_type"])
+                if stype not in PRESETS:
+                    raise PreviewError("unknown sound type")
+                adv = parse_advanced({"band_edges_hz": body.get("band_edges_hz")}, stype, 48000)
+                edges = adv.get("band_edges_hz", list(PRESETS[stype].band_edges_hz))
+                order = body.get("filter_order", C.FILTER_ORDER_DEFAULT)
+                if order not in C.FILTER_ORDERS:
+                    raise PreviewError("bad filter order")
+                sel = body.get("select") or {"kind": "all", "index": 0}
+                wav = render_preview(audio, stype, edges, int(order), str(sel.get("kind")), int(sel.get("index", 0)))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError, AttributeError) as exc:
+                self._error(HTTPStatus.BAD_REQUEST, str(exc) or "bad request")
+                return
+            self._send(HTTPStatus.OK, wav, "audio/wav")
 
         def _feedback(self) -> None:
             length = self._length(MAX_JSON_BYTES)
