@@ -37,6 +37,8 @@ class TypePreset:
     length_group: int = 0             # group whose source sets the length of the blend (decay matching)
     centroid_anchor: bool = False     # anchor = energy centroid of the attack (multi-burst sounds)
     pitched: bool = False             # show the detected pitch and warn when the inputs differ
+    morph: bool = False               # tonal blending: shared volume curve + spectral morph above the
+                                      # single-owner low end (instead of band patches and decay matching)
 
     @property
     def single_owner_bands(self) -> tuple[bool, ...]:
@@ -70,11 +72,11 @@ PRESETS: dict[str, TypePreset] = {
     # pitched bass: one owner up to 300 Hz, phase alignment everywhere, length follows Low
     "bass": TypePreset("bass", (80.0, 250.0, 1000.0, 4000.0), ("Sub", "Body", "Mids", "Top", "Air"),
                        (15.0, 400.0), (0, 0, 1, 2, 2), saturation_drive_db=1.0,
-                       single_owner_below_hz=300.0, length_group=0, pitched=True),
+                       single_owner_below_hz=300.0, length_group=0, pitched=True, morph=True),
     # pitched synth one-shot: phase alignment below 5 kHz, length follows Mid
     "synth": TypePreset("synth", (200.0, 1000.0, 5000.0), ("Low", "Body", "Presence", "Air"),
                         (20.0, 300.0), (0, 1, 2, 2), noise_from_hz=5000.0, length_group=1,
-                        pitched=True),
+                        pitched=True, morph=True),
 }
 
 SOUND_TYPES: tuple[str, ...] = tuple(PRESETS)

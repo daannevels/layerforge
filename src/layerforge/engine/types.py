@@ -110,6 +110,17 @@ class Recipe:
     seed: int = 0
     candidate: int = 0                # 0 = base
     variation_amount: float = 0.0     # percent
+    # --- tonal blending (pitched types; all empty/False for drums) ---------------------------
+    morph: bool = False                       # bands with morph_bands[b] come from the spectral morph
+    morph_bands: list[bool] = field(default_factory=list)       # [band]
+    morph_weights: list[list[float]] = field(default_factory=list)  # [band][input]
+    morph_power: float = 0.5                  # power-mean exponent of the magnitude morph
+    phase_leader: int = 0                     # input whose phase is kept near the low end
+    leader_phase_below_hz: float = 0.0        # Hz
+    env_start: int = 0                        # samples: centre of frame 0 of the volume curves
+    env_frame: int = 0                        # samples between frames
+    env_gain_db: list[list[float]] = field(default_factory=list)   # [input][frame] dB
+    env_alive: list[list[float]] = field(default_factory=list)     # [input][frame] 0..1
     schema_version: int = RECIPE_SCHEMA_VERSION
     notes: dict[str, Any] = field(default_factory=dict)  # diagnostics only, not used by render
 
@@ -119,8 +130,9 @@ class Recipe:
     @classmethod
     def from_dict(cls, d: dict) -> "Recipe":
         d = dict(d)
-        if d.get("schema_version") != RECIPE_SCHEMA_VERSION:
+        if d.get("schema_version") not in (1, RECIPE_SCHEMA_VERSION):  # 1 = before tonal blending
             raise ValueError(f"unsupported recipe schema_version {d.get('schema_version')}")
         d["inputs"] = [InputSpec(**i) for i in d["inputs"]]
         d["cells"] = [[[Owner(**o) for o in zone] for zone in band] for band in d["cells"]]
+        d["schema_version"] = RECIPE_SCHEMA_VERSION
         return cls(**d)

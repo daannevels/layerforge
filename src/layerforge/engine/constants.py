@@ -62,6 +62,29 @@ TAIL_OWNER_MIN_RATIO = 0.7     # ratio: inputs whose decay is below this x targe
 JITTER_LENGTH = 0.5            # without a length leader, the target decay moves exp(U(-1,1) * this * j *
                                # ln(longest / shortest)) around the median, clamped to [shortest, longest]
 
+# --- Tonal blending (pitched types: bass, synth) -------------------------------------
+ENV_FRAME_MS = 10.0            # ms: frame grid of the shared volume curve
+ENV_FLOOR_DB = -80.0           # dB re own peak: envelope floor
+ENV_GAIN_MIN_DB = -120.0       # dB: strongest cut a gain curve may apply (after the release: silence)
+ENV_GAIN_MAX_DB = 9.0          # dB: strongest boost a gain curve may apply
+ENV_RAMP_FRAMES = 3            # frames: ramp from 0 dB to the full gain curve after the attack
+ENV_SMOOTH_FRAMES = 5          # frames: moving-average smoothing of the gain curves
+LENGTH_DB = -40.0              # dB re own peak: an input's "length" is where its volume curve last reaches this
+RELEASE_FRACTION = 0.15        # fraction of the target length used for the shared release fade
+RELEASE_FLOOR_DB = -120.0      # dB: the shared curve after the release (silence)
+JITTER_LENGTH_TONAL = 1.0      # without a length leader the target length is exp(U(-1,1) * this * j) times
+                               # the geometric mean of the input lengths, clamped to [shortest, longest]
+ALIVE_LO_DB = -50.0            # dB re own peak (after the gain curve): below this an input leaves the morph
+ALIVE_HI_DB = -35.0            # dB: above this it takes full part
+JITTER_ENV_MIX = 1.0           # Dirichlet-like spread of the target curve weights (times j) without a leader
+MORPH_FFT_MS = 21.0            # ms: STFT frame (rounded to a power of two: 1024 at 44.1/48 kHz)
+MORPH_HOP_DIV = 4              # hop = frame / this
+MORPH_POWER = 0.5              # power-mean exponent of the magnitude morph (1 = average, -> 0 = geometric)
+JITTER_MORPH_POWER = 0.5       # morph exponent is multiplied by exp(U(-1,1) * this * j), kept in [0.25, 1]
+MORPH_CHOSEN_WEIGHT = 0.7      # weight of the source the user chose for a group (the rest share the remainder)
+JITTER_MORPH_WEIGHT = 1.0      # band weights x exp(N(0,1) * this * j), then normalised
+MORPH_LEADER_PHASE_OCTAVES = 1.0  # octaves above the low end where the low leader's phase is kept
+
 # --- Pitch (pitched types only, information for the user) -----------------------------
 F0_MIN_HZ = 25.0               # Hz: lowest detectable pitch
 F0_MAX_HZ = 2000.0             # Hz: highest detectable pitch
@@ -116,4 +139,4 @@ FIR_CUTOFF = 0.90              # fraction of the input-rate Nyquist frequency
 
 # --- Output ---------------------------------------------------------------------
 OUTPUT_SUBTYPE = "PCM_24"      # WAV sample format
-RECIPE_SCHEMA_VERSION = 1      # bump when the recipe format changes
+RECIPE_SCHEMA_VERSION = 2      # bump when the recipe format changes (2: tonal blending fields)

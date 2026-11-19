@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from layerforge.engine import morph as M
 from layerforge.engine.align import shift
 from layerforge.engine.bands import split_bands
 from layerforge.engine.mix import all_zone_windows, assemble
@@ -137,13 +138,45 @@ def band_trim_gains(recipe: Recipe) -> np.ndarray:
     return 10.0 ** (np.asarray(recipe.band_trims_db, dtype=np.float64) / 20.0)
 
 
+def volume_curves(recipe: Recipe) -> np.ndarray:
+    """(inputs, length) linear gains of the shared volume curve (tonal blending)."""
+    return np.stack([10.0 ** (M.curve_to_samples(np.asarray(g), recipe.env_start, recipe.env_frame,
+                                                  recipe.length) / 20.0) for g in recipe.env_gain_db])
+
+
+def assemble_tonal(recipe: Recipe, bands: np.ndarray) -> np.ndarray:
+    """Tonal blending (pitched types): every input follows the shared volume curve; the single-owner
+    low bands come from their cells as usual; the other bands come from the spectral morph of the
+    whole (gained) inputs, split with the same filters. Returns (channels, length)."""
+    sr = recipe.sample_rate
+    gained = bands * volume_curves(recipe)[:, None, None, :]
+    low_cells = [row if not recipe.morph_bands[b] else [[] for _ in row] for b, row in enumerate(recipe.cells)]
+    trims = band_trim_gains(recipe)
+    low = assemble(moved_bands(recipe, gained), low_cells, recipe_windows(recipe), trims)
+    full = gained.sum(axis=1)                                   # (inputs, channels, length)
+    w = np.asarray(recipe.morph_weights, dtype=np.float64)      # (bands, inputs)
+    alive = np.asarray(recipe.env_alive, dtype=np.float64)
+    y = np.stack([M.morph(full[:, c], w, recipe.band_edges_hz, sr, alive, recipe.env_start,
+                          recipe.env_frame, recipe.morph_power, recipe.phase_leader,
+                          recipe.leader_phase_below_hz) for c in range(full.shape[1])])
+    gl = int(round(recipe.guard_ms * sr / 1000.0))
+    y = y * guard_window(recipe.length, recipe.origin, gl)    # no STFT pre-echo before the onset
+    yb = split_bands(y, recipe.band_edges_hz, sr, recipe.filter_order)
+    high = sum(trims[b] * yb[b] for b in range(len(recipe.morph_bands)) if recipe.morph_bands[b])
+    return low + high
+
+
 def render(recipe: Recipe, inputs: list[np.ndarray], cache: BandCache | None = None,
            fast_peak: bool = False) -> RenderResult:
     """Render one recipe. inputs: list of (channels, n) float64 arrays at recipe.sample_rate.
     fast_peak: normalise on the sample peak instead of the true peak (candidate pool only)."""
     sr = recipe.sample_rate
-    moved = moved_bands(recipe, prepare_bands(recipe, inputs, cache))
-    assembled = assemble(moved, recipe.cells, recipe_windows(recipe), band_trim_gains(recipe))
+    bands = prepare_bands(recipe, inputs, cache)
+    if recipe.morph:
+        assembled = assemble_tonal(recipe, bands)
+    else:
+        assembled = assemble(moved_bands(recipe, bands), recipe.cells, recipe_windows(recipe),
+                             band_trim_gains(recipe))
     y, start, end, gain = post_chain(mono_below(assembled, sr), sr, recipe.drive_db, fast_peak)
     return RenderResult(y, start, end, assembled, gain)
 

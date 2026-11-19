@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from layerforge.engine import constants as C
+from layerforge.engine import morph as M
 from layerforge.engine.align import best_align, best_coherence_shift, best_envelope_lag, coherence_ratio, shift
 from layerforge.engine.analysis import analyse, anchor_shifts, level_match_gains_db
 from layerforge.engine.bands import bandpass
@@ -248,7 +249,7 @@ def plan_candidate(prep: Prepared, inputs: list[np.ndarray], keepmap: KeepMap,
     decays = [a.decay_s for a in prep.analyses]
     length_leader = group_leader(prep.sound_type, keepmap, preset.length_group)
     target = target_decay(decays, length_leader, rng if jitter else None, j)
-    slopes = decay_slopes(decays, target)
+    slopes = [0.0] * n_in if preset.morph else decay_slopes(decays, target)
     attack_n = int(round(rs["zones"][0] * sr / 1000.0))
     specs = [InputSpec(**{**vars(s), "decay_slope_db_s": float(sl), "decay_start": s.onset + attack_n})
              for s, sl in zip(prep.specs, slopes)]
@@ -276,6 +277,8 @@ def plan_candidate(prep: Prepared, inputs: list[np.ndarray], keepmap: KeepMap,
         noise_bands(prep.sound_type, rs["envelope_align"]), rs["crossover"], preset.envelope_align_ms)
     notes["target_decay_s"] = round(target, 4)
     notes["length_leader"] = length_leader
+    if preset.morph:
+        plan_morph(recipe, prep, keepmap, mono, length_leader, rng if jitter else None, j)
     if jitter:
         weights = band_weights(recipe.cells, n_in)
         for b in range(n_b):
@@ -288,6 +291,66 @@ def plan_candidate(prep: Prepared, inputs: list[np.ndarray], keepmap: KeepMap,
                     recipe.lags[b][i] += int(round(extra_ms[b, i] * sr / 1000.0))
     recipe.notes = notes
     return recipe
+
+
+def plan_morph(recipe: Recipe, prep: Prepared, keepmap: KeepMap, mono: np.ndarray,
+               length_leader: int | None, rng: np.random.Generator | None, j: float) -> None:
+    """Tonal blending plan (pitched types): shared volume curve, morph weights, power and leader.
+    mono: (inputs, bands, n) guarded band signals of the candidate."""
+    preset = get_preset(prep.sound_type)
+    sr = prep.sample_rate
+    n_in, n_b = mono.shape[0], mono.shape[1]
+    single = list(preset.single_owner_bands)
+    recipe.morph = True
+    recipe.morph_bands = [not s for s in single]
+    # shared volume curve
+    frame = max(int(round(C.ENV_FRAME_MS * sr / 1000.0)), 1)
+    n_frames = int(np.ceil((prep.length - prep.origin) / frame)) + 1
+    full = mono.sum(axis=1)
+    envs = np.stack([M.frame_envelope_db(full[i], prep.origin, frame, n_frames) for i in range(n_in)])
+    lengths = np.array([M.curve_length(e, frame) for e in envs], dtype=np.float64)
+    if length_leader is not None:
+        target_len = lengths[length_leader]
+        v = np.zeros(n_in)
+        v[length_leader] = 1.0
+    else:
+        target_len = float(np.exp(np.mean(np.log(lengths))))
+        v = np.ones(n_in)
+        if rng is not None:
+            target_len *= float(np.exp(rng.uniform(-1, 1) * C.JITTER_LENGTH_TONAL * j))
+            target_len = float(np.clip(target_len, lengths.min(), lengths.max()))
+            v = v * np.exp(rng.standard_normal(n_in) * C.JITTER_ENV_MIX * j)
+        v = v / v.sum()
+    target = M.target_curve(envs, v, int(round(target_len)))
+    recipe.notes["target_length_s"] = round(target_len * frame / sr, 3)
+    hold = int(round(prep.rs["zones"][0] * sr / 1000.0 / frame))
+    gains = M.gain_curves(envs, target, hold)
+    alive = M.alive_curves(envs, gains)
+    recipe.env_start, recipe.env_frame = int(prep.origin), int(frame)
+    recipe.env_gain_db = [[round(float(g), 3) for g in row] for row in gains]
+    recipe.env_alive = [[round(float(a), 4) for a in row] for row in alive]
+    # morph weights per band: the group's chosen source leads, Free = equal; jittered in variations
+    weights = []
+    for b in range(n_b):
+        chosen = group_leader(prep.sound_type, keepmap, preset.band_groups[b])
+        if chosen is not None and n_in > 1:
+            w = np.full(n_in, (1.0 - C.MORPH_CHOSEN_WEIGHT) / (n_in - 1))
+            w[chosen] = C.MORPH_CHOSEN_WEIGHT
+        else:
+            w = np.full(n_in, 1.0 / n_in)
+        if rng is not None:
+            w = w * np.exp(rng.standard_normal(n_in) * C.JITTER_MORPH_WEIGHT * j)
+        weights.append([round(float(x), 6) for x in w / w.sum()])
+    recipe.morph_weights = weights
+    p = C.MORPH_POWER
+    if rng is not None:
+        p = float(np.clip(p * np.exp(rng.uniform(-1, 1) * C.JITTER_MORPH_POWER * j), 0.25, 1.0))
+    recipe.morph_power = round(float(p), 6)
+    low = [o for owners in recipe.cells[0] for o in owners]
+    recipe.phase_leader = max(low, key=lambda o: (o.weight, -o.input)).input if low else 0
+    last_single = max([b for b in range(n_b) if single[b]], default=-1)
+    edge = recipe.band_edges_hz[last_single] if 0 <= last_single < len(recipe.band_edges_hz) else 0.0
+    recipe.leader_phase_below_hz = float(edge * 2.0 ** C.MORPH_LEADER_PHASE_OCTAVES)
 
 
 def plan_base(inputs: list[np.ndarray], names: list[str], keepmap: KeepMap, settings: Settings,

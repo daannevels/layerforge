@@ -162,8 +162,14 @@ def note_name(f0_hz: float) -> str:
 
 
 def pitch_spread_cents(f0s: list[float]) -> float:
-    """Largest distance in cents between detected pitches (0 when fewer than two were found)."""
-    f = [v for v in f0s if v > 0]
-    if len(f) < 2:
+    """Largest distance in cents between the detected pitch CLASSES (octaves count as the same
+    note: C2 and C4 give 0). 0 when fewer than two pitches were found."""
+    pc = [(1200 * np.log2(v / 440.0)) % 1200 for v in f0s if v > 0]
+    if len(pc) < 2:
         return 0.0
-    return float(1200 * np.log2(max(f) / min(f)))
+    worst = 0.0
+    for a in pc:
+        for b in pc:
+            d = abs(a - b) % 1200
+            worst = max(worst, min(d, 1200 - d))
+    return float(worst)
