@@ -43,7 +43,17 @@
     <section>
       <h2>Samples</h2>
       <p class="help">Laad 2 tot 4 samples van hetzelfde soort (sleep ze in een vak of klik erop).
-        Spatiebalk = afspelen of stoppen.</p>
+        Spatiebalk = afspelen of stoppen. In het spectrogram (boven) sleep je de <b>bandgrenzen</b>
+        (horizontale lijnen); in de golfvorm (onder) sleep je de <b>tijdzones</b> Attack | Sustain | Tail
+        (verticale lijnen). Die gelden voor alle samples.</p>
+      <div class="listenbar">
+        <label class="field">Solo
+          <select id="solo"></select>
+        </label>
+        <label class="check"><input id="mono" type="checkbox"> Mono</label>
+        <label class="check"><input id="loop" type="checkbox"> Loop</label>
+        <span class="muted small">Solo, Mono en Loop gelden voor alles wat je afspeelt. Alles speelt even luid af.</span>
+      </div>
       <div id="slots" class="slots"></div>
     </section>
 
@@ -52,6 +62,32 @@
       <p class="help">Kies per deel welk sample de richting geeft. <b>Free</b> = Layerforge kiest zelf, en dat
         is per variatie anders. Je hoeft niet alles te kiezen.</p>
       <table id="direction" class="direction"></table>
+      <p class="help small">Alt-klik (Mac: Option-klik) op een nummer = luister naar precies dat deel van dat
+        sample.</p>
+      <details id="advanced" class="advanced">
+        <summary>Advanced</summary>
+        <div class="adv-grid">
+          <label>Filter order
+            <select id="advOrder"></select>
+          </label>
+          <label>Onset guard (ms)
+            <input id="advGuard" type="number" min="0" max="5" step="0.5" class="num">
+          </label>
+          <label class="check"><input id="advEnvelope" type="checkbox"> Align noise bands on their envelope</label>
+          <label class="check"><input id="advCrossover" type="checkbox"> Crossover check</label>
+          <label>Saturation drive
+            <input id="advDrive" type="range" min="0" max="6" step="0.5">
+            <span id="advDriveLabel" class="num-label"></span>
+          </label>
+          <div class="adv-edges"><span>Band edges (Hz)</span><span id="advEdges"></span></div>
+          <div class="adv-edges"><span>Zone edges (ms)</span><span id="advZones"></span></div>
+          <button id="advReset">Reset to type defaults</button>
+        </div>
+        <p class="help small">Filter order: hoe steil de banden gescheiden worden (2 = standaard). Onset guard:
+          hoe lang de zachte fade vóór de klap is. Envelope: ruis (hats, crash, clap) uitlijnen op de
+          luidheidscurve in plaats van op de golf. Crossover check: controleert of twee banden van verschillende
+          samples elkaar bij de grens niet uitdoven.</p>
+      </details>
     </section>
 
     <section id="results" hidden>
@@ -97,7 +133,11 @@
           <button class="remove round" title="Remove">✕</button>
         </div>
         <div class="slot-meta muted"></div>
-        <canvas class="wave" height="70"></canvas>
+        <canvas class="spec" height="120" title="Drag the horizontal lines to move the band edges"></canvas>
+        <canvas class="wave zones" height="70" title="Click to play; drag the vertical lines to move the time zones"></canvas>
+        <div class="zone-label muted small"></div>
+        <label class="trim">Trim <input class="trimRange" type="range" min="-12" max="12" step="0.5" value="0">
+          <span class="trimLabel num-label">0.0 dB</span></label>
       </div>
     </div>
   </template>
