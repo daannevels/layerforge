@@ -34,6 +34,7 @@
     </div>
     <button id="generate" class="primary" disabled>Generate</button>
     <button id="openFolder" title="Show your Layerforge folder">Open Layerforge folder</button>
+    <a id="exportFeedback" class="button" title="Download all your feedback as one small text file, to send to Claude">Export feedback (<span id="fbCount">0</span>)</a>
     <div class="progress" id="progressWrap" hidden><div id="progressBar"></div></div>
     <span id="status" class="muted"></span>
   </header>
@@ -67,6 +68,19 @@
   <dialog id="recipeDialog">
     <div class="dialog-head"><b id="recipeTitle">Recipe</b><button id="recipeClose" class="round" title="Close">✕</button></div>
     <pre id="recipeText"></pre>
+  </dialog>
+
+  <dialog id="feedbackDialog">
+    <div class="dialog-head"><b id="feedbackTitle">Feedback</b><button id="feedbackClose" class="round" title="Close">✕</button></div>
+    <p class="help">Wat vind je van deze variatie? Er wordt geen geluid bewaard, alleen de getallen van de blend
+      en jouw oordeel.</p>
+    <div class="fb-rating">
+      <button data-rating="1" class="rate">👍 Goed</button>
+      <button data-rating="-1" class="rate">👎 Niet goed</button>
+    </div>
+    <div id="fbTags" class="fb-tags"></div>
+    <textarea id="fbText" rows="3" maxlength="2000" placeholder="Wat hoor je? (mag ook leeg)"></textarea>
+    <div class="row-end"><button id="fbSend" class="primary">Send</button></div>
   </dialog>
 
   <template id="slotTemplate">

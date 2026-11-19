@@ -116,3 +116,19 @@ dialog {
 dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 .dialog-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 dialog pre { margin: 0; max-height: 70vh; overflow: auto; font-size: 12px; background: var(--panel2); padding: 10px; border-radius: 6px; }
+a.button {
+  display: inline-flex; align-items: center; text-decoration: none; color: inherit; cursor: pointer;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; min-height: 38px;
+}
+.fb-rating { display: flex; gap: 8px; margin-bottom: 10px; }
+.fb-rating .rate.on { border-color: var(--accent); color: var(--accent); }
+.fb-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.fb-tags button { min-height: 34px; padding: 4px 10px; font-size: 0.9rem; }
+.fb-tags button.on { background: var(--accent); border-color: var(--accent); color: #1a1a1a; }
+#fbText {
+  width: 100%; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px;
+  padding: 8px; resize: vertical;
+}
+.row-end { display: flex; justify-content: flex-end; margin-top: 10px; }
+.card button.fb.done { color: var(--ok); border-color: var(--ok); }
+.pitch { color: var(--accent); }

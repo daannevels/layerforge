@@ -260,7 +260,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 app.uploads[uid] = Upload(name=Path(name).name, ext=ext, data=data, sample_rate=sr,
                                           channels=x.shape[0], frames=x.shape[1])
             self._json(HTTPStatus.OK, {"id": uid, "name": Path(name).name, "sample_rate": sr,
-                                       "channels": int(x.shape[0]), "seconds": x.shape[1] / sr})
+                                       "channels": int(x.shape[0]), "seconds": x.shape[1] / sr,
+                                       "f0_hz": round(estimate_f0(x, sr, find_onset(x, sr)), 2)})
 
         def _generate(self) -> None:
             length = self._length(MAX_JSON_BYTES)

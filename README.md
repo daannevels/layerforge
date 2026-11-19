@@ -5,8 +5,9 @@ Layerforge maakt **nieuwe drum one-shots** uit 2 tot 4 van je eigen samples van 
 bijvoorbeeld de body van kick 1 en de top van kick 2. Layerforge mengt die stukken tot nieuwe samples.
 Alles draait op je eigen computer. Er gaat niets naar internet.
 
-> **Status: mijlpaal M3.** Je kunt 2 tot 4 samples laden, per deel (Low, Mid, High) een richting kiezen
-> en 1 tot 16 variaties maken. Luister-gereedschap (solo, mono, loop) komt in mijlpaal M4.
+> **Status: mijlpaal M3b.** Elk instrument heeft nu een eigen profiel (ook **bass** en **synth**),
+> lengtes van samples worden netjes op elkaar afgestemd, en je kunt per variatie feedback geven.
+> Luister-gereedschap (solo, mono, loop) komt in mijlpaal M4.
 
 ## Downloaden
 
@@ -28,7 +29,8 @@ Laat het zwarte venster openstaan zolang je Layerforge gebruikt. Sluit het venst
 
 ## Zo gebruik je het
 
-1. Kies bovenaan het **Sound type** (kick, clap, closedhat, openhat, crash of perc).
+1. Kies bovenaan het **Sound type**: kick, clap, closedhat, openhat, crash, perc, bass of synth.
+   Elk type heeft een eigen profiel (zie "Wat doet elk instrument anders?" hieronder).
 2. Sleep een sample in een vak, of klik op het vak om een bestand te kiezen. Laad er 2 tot 4.
    Met **+ Add sample slot** maak je een extra vak. Met **✕** haal je een sample weg.
 3. Bij **Direction** kies je per deel welk sample de richting geeft:
@@ -48,12 +50,47 @@ Laat het zwarte venster openstaan zolang je Layerforge gebruikt. Sluit het venst
 7. Bewaren: **★** zet een kopie in je map `Favourites`. **Download** slaat de WAV op. Je kunt een kaart ook
    rechtstreeks naar je DAW slepen (werkt in Chrome en Edge). **Recipe** toont alle getallen van die blend.
 
+8. **Feedback**: klik op een kaart op **Feedback**. Kies duim omhoog of omlaag, klik de labels aan die
+   kloppen (bijv. "Klinkt als 2 lagen", "Staart klopt niet") en typ eventueel wat je hoort. Er wordt
+   **geen geluid** bewaard: alleen de getallen van de blend en jouw oordeel, één regel tekst per keer
+   (een paar kB) in het bestand `feedback.jsonl` in je Layerforge-map. Met **Export feedback** bovenaan
+   download je alles in één bestand. Stuur dat naar Claude: dan worden de profielen ermee bijgesteld.
+
 **Seed en Lock.** De seed is het startgetal voor het toeval. Elke klik op Generate kiest een nieuwe seed,
 dus je krijgt steeds nieuwe variaties. Zet **Lock** aan om dezelfde seed te houden: met dezelfde samples,
 keuzes en instellingen krijg je dan precies dezelfde variaties terug. **New seed** kiest een nieuw getal.
 
 In het laag mengt Layerforge nooit twee samples door elkaar, want lage tonen kunnen elkaar uitdoven.
 Daar wint altijd één sample. Variaties waarbij het laag toch zwakker wordt, gooit Layerforge zelf weg.
+
+## Wat doet elk instrument anders?
+
+| Type | Laag (nooit gemengd) | Uitlijnen | Aanslag | Lengte volgt |
+|---|---|---|---|---|
+| kick | tot 200 Hz | op de golf (fase), Air op de omhullende | mag mengen | Low |
+| clap | – | op de omhullende (de klapjes), ±3 ms | van één clap | Mid |
+| closedhat, openhat, crash | – | boven 300 Hz op de omhullende | van één sample | High |
+| perc | – | onder 2 kHz op de golf, erboven op de omhullende | van één sample | Mid |
+| bass | tot 300 Hz | overal op de golf (fase) | mag mengen | Low |
+| synth | tot 200 Hz | onder 5 kHz op de golf | mag mengen | Mid |
+
+- **Uitlijnen op de golf** = de golven precies op elkaar leggen, zodat ze elkaar versterken in plaats van
+  uitdoven. Belangrijk voor tonen (kick, bass, synth).
+- **Uitlijnen op de omhullende** = de luidheidscurves op elkaar leggen. Voor ruis (hats, crash, clap)
+  zegt de golf niets, de vorm van de klap wel.
+- **Aanslag van één sample** = geen dubbele klap ("flam").
+- **Lengte**: in elke band komt de staart van hetzelfde sample als het lijf. Samples die langer zijn dan
+  de "lengte-leider" sterven even snel uit als de leider. De leider is het sample dat jij kiest bij de groep
+  in de laatste kolom. Staat die op Free, dan kiest Layerforge per variatie een lengte tussen de kortste en
+  de langste in.
+- **Bass en synth**: bij elk sample zie je de toonhoogte (bijv. A1). Hebben je samples verschillende
+  noten, dan krijg je een waarschuwing, want die botsen. Samples op dezelfde noot mengen het best.
+
+## Opruimen
+
+Layerforge bewaart alleen de **20 nieuwste** projecten in `Projects`. Oudere projecten worden automatisch
+verwijderd (bij het starten en na elke Generate). Je **Favourites** worden nooit verwijderd, en je
+`feedback.jsonl` ook niet. Wil je een variatie houden? Geef hem een ★ of download hem.
 
 **Waar staan mijn bestanden?** Klik op **Open Layerforge folder**. Het is de map `Layerforge` in je
 persoonlijke map (Mac: `/Users/<jouw naam>/Layerforge`, Windows: `C:\Users\<jouw naam>\Layerforge`).

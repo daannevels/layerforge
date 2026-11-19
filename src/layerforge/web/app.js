@@ -14,6 +14,22 @@ let audioCtx = null;
 let current = null;      // {source, onstop}
 let lastPlayed = null;   // plays the last thing again (space bar)
 let busy = false;
+let fbTarget = null;     // {fileId, button} of the card the feedback dialog is for
+
+// Dutch labels for the feedback tags (ids come from the server)
+const TAG_LABELS = {
+  good: "Goed zo", two_layers: "Klinkt als 2 lagen", tail_wrong: "Staart klopt niet",
+  length_wrong: "Lengte klopt niet", low_end_thin: "Laag te dun", low_end_boomy: "Laag te dik/boemerig",
+  attack_weak: "Aanslag te zwak", attack_doubled: "Dubbele aanslag", click_artifact: "Klik of artefact",
+  phasey: "Fase-achtig/hol", too_dull: "Te dof", too_harsh: "Te scherp", pitch_clash: "Toonhoogtes botsen",
+  not_my_direction: "Niet mijn richting",
+};
+const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+function noteName(f0) {
+  if (!f0) return "";
+  const midi = Math.round(69 + 12 * Math.log2(f0 / 440));
+  return `${NOTE_NAMES[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;
+}
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -178,9 +194,16 @@ function renderSlots() {
       $(".badge", slot.el).textContent = String(loaded.indexOf(slot) + 1);
       $(".slot-name", slot.el).textContent = slot.upload.name;
       $(".slot-name", slot.el).title = slot.upload.name;
-      $(".slot-meta", slot.el).textContent =
+      const meta = $(".slot-meta", slot.el);
+      meta.textContent =
         `${(slot.upload.seconds * 1000).toFixed(0)} ms · ${(slot.upload.sample_rate / 1000).toFixed(1)} kHz · ` +
         (slot.upload.channels === 1 ? "mono" : "stereo");
+      if (PRESETS.types[$("#soundType").value].pitched) {
+        const p = document.createElement("span");
+        p.className = "pitch";
+        p.textContent = slot.upload.f0_hz ? ` · ${noteName(slot.upload.f0_hz)} (${slot.upload.f0_hz.toFixed(1)} Hz)` : " · no clear pitch";
+        meta.appendChild(p);
+      }
     }
   }
   if (slots.length < PRESETS.max_inputs) {
@@ -327,6 +350,7 @@ async function showResults(result) {
         <button class="ab" title="Switch between this variation and the simple stack">A/B stack</button>
         <a class="button dl" title="Download WAV">Download</a>
         <button class="recipe" title="Show the recipe (all numbers of this blend)">Recipe</button>
+        <button class="fb" title="Tell Claude what you think of this variation">Feedback</button>
       </div>`;
     const fname = `layerforge_${result.project}_${v.name}.wav`;
     $(".title", el).textContent = v.name;
@@ -351,6 +375,7 @@ async function showResults(result) {
     });
     $(".ab", el).addEventListener("click", () => { selectCard(index, false); card.play(!card.abStack); });
     $(".recipe", el).addEventListener("click", () => showRecipe(`${result.project} · ${v.name}`, v.file));
+    $(".fb", el).addEventListener("click", () => openFeedback(`${result.project} · ${v.name}`, v.file, $(".fb", el)));
     const star = $(".star", el);
     star.addEventListener("click", async () => {
       const on = !star.classList.contains("on");
@@ -368,6 +393,58 @@ async function showResults(result) {
   }
   if (cards.length) selectCard(0, false);
   $("#results").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// ---------------------------------------------------------------- feedback
+function openFeedback(title, fileId, button) {
+  fbTarget = { fileId, button };
+  $("#feedbackTitle").textContent = `Feedback · ${title}`;
+  for (const b of document.querySelectorAll("#feedbackDialog .rate")) b.classList.remove("on");
+  for (const b of document.querySelectorAll("#fbTags button")) b.classList.remove("on");
+  $("#fbText").value = "";
+  $("#feedbackDialog").showModal();
+}
+
+async function sendFeedback() {
+  if (!fbTarget) return;
+  const rateBtn = document.querySelector("#feedbackDialog .rate.on");
+  const tags = [...document.querySelectorAll("#fbTags button.on")].map((b) => b.dataset.tag);
+  const text = $("#fbText").value;
+  if (!rateBtn && !tags.length && !text.trim()) { setStatus("Kies eerst iets, of typ een opmerking.", true); return; }
+  try {
+    const r = await postJson("/api/feedback", {
+      file: fbTarget.fileId, rating: rateBtn ? Number(rateBtn.dataset.rating) : 0, tags, text,
+    });
+    fbTarget.button.classList.add("done");
+    fbTarget.button.textContent = "Feedback ✓";
+    $("#fbCount").textContent = String(r.count);
+    $("#feedbackDialog").close();
+    setStatus("Bedankt! Je feedback is bewaard.");
+  } catch (err) {
+    setStatus(`Feedback mislukt: ${err.message}`, true);
+  }
+}
+
+function setupFeedback() {
+  const box = $("#fbTags");
+  for (const tag of PRESETS.feedback_tags) {
+    const b = document.createElement("button");
+    b.dataset.tag = tag;
+    b.textContent = TAG_LABELS[tag] || tag;
+    b.addEventListener("click", () => b.classList.toggle("on"));
+    box.appendChild(b);
+  }
+  for (const b of document.querySelectorAll("#feedbackDialog .rate")) {
+    b.addEventListener("click", () => {
+      const was = b.classList.contains("on");
+      for (const o of document.querySelectorAll("#feedbackDialog .rate")) o.classList.remove("on");
+      if (!was) b.classList.add("on");
+    });
+  }
+  $("#fbSend").addEventListener("click", sendFeedback);
+  $("#feedbackClose").addEventListener("click", () => $("#feedbackDialog").close());
+  $("#exportFeedback").href = `/api/feedback/export?token=${encodeURIComponent(TOKEN)}`;
+  api("/api/feedback/count").then((r) => { $("#fbCount").textContent = String(r.count); }).catch(() => {});
 }
 
 // ---------------------------------------------------------------- init
@@ -412,11 +489,12 @@ async function init() {
     } catch (err) { setStatus(`Kan de map niet openen: ${err.message}`, true); }
   });
   $("#recipeClose").addEventListener("click", () => $("#recipeDialog").close());
+  setupFeedback();
   for (let i = 0; i < PRESETS.min_inputs; i++) addSlot();
   $("#generate").addEventListener("click", generate);
   document.addEventListener("keydown", (e) => {
     const tag = document.activeElement ? document.activeElement.tagName : "";
-    if (["INPUT", "SELECT", "TEXTAREA"].includes(tag) || $("#recipeDialog").open) return;
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(tag) || $("#recipeDialog").open || $("#feedbackDialog").open) return;
     if (e.code === "Space") {
       e.preventDefault();
       if (current) stop(); else if (lastPlayed) lastPlayed();

@@ -56,7 +56,9 @@ Phase 2 = a JUCE/VST3 port in C++, so the engine must stay portable. The full br
 - M1 Skeleton (layout, uv, launchers, CI, fixtures, selftest stub, "Layerforge works" page) — done ✅
 - M2 Engine (sections 4–5) + first sound (minimal UI, base variation, compare with simple stack) — done ✅
 - M3 Variations (planner, quality gate, selection, results grid, workspace, `render`) + simple
-  Low/Mid/High direction UI (Daan's feedback on M2) — done, awaiting OK
+  Low/Mid/High direction UI (Daan's feedback on M2) — done ✅
+- M3b (Daan's feedback on M3): instrument profiles, bass + synth types, length/decay matching,
+  feedback button (no audio stored), project cleanup — done, awaiting OK
 - M4 Editing and listening tools (spectrogram/waveform editing, solo, mono, loop, A/B, Advanced)
 - M5 Polish and port-readiness (README, ENGINE_SPEC, PROJECT_SUMMARY, golden vectors, tag v0.1.0)
 
@@ -100,3 +102,25 @@ Phase 2 = a JUCE/VST3 port in C++, so the engine must stay portable. The full br
   writes `vNN_render.wav`; it is byte-identical to `vNN.wav` (tested).
 - Uploads are kept in memory by the server; Generate copies them to `Projects/<id>/inputs/inputN.ext`
   (the original names only go into project.json).
+- **Instrument profiles (M3b):** one pipeline, per-type rules in `TypePreset` (presets.py):
+  `single_owner_below_hz` (decided on DEFAULT edges via `single_owner_bands`, so edge jitter never enables
+  low-end mixing — this fixed a bug where kick Body could mix when its edge was jittered above 200 Hz),
+  `noise_from_hz` (bands from there up: envelope alignment, no polarity, no crossover check),
+  `envelope_align_ms`, `single_attack` (Attack cells never mix; open Attack cells go to one transient
+  leader = the High-group source if chosen), `length_group`, `centroid_anchor` (clap), `pitched`
+  (bass/synth: pitch shown + warning when inputs differ > 50 cents). `Settings.relaxed_alignment=False`
+  turns envelope alignment off (waveform everywhere).
+- **Tail continuity:** an open Tail cell follows the band's Sustain owner; open Sustain+Tail are chosen
+  together; inputs shorter than `TAIL_OWNER_MIN_RATIO` x target never own open Tail cells.
+- **Decay matching:** target decay = decay of the length-group source, else the median (jittered towards
+  shortest/longest in variations). Longer inputs get `decay_slope_db_s = DECAY_DB * (1/T - 1/D)` from
+  `decay_start` (onset + Attack edge). The fade multiplies every band of the input AFTER the cached split
+  (exact: bands still sum to the faded input), stored in `InputSpec`.
+- **Parallel pool:** `select.generate` uses spawn worker processes when the pool is big
+  (`POOL_PARALLEL_MIN_WORK`), falls back to sequential on any pool failure; results are identical (tested).
+- **Feedback:** `server/feedback.py`, one JSON line per remark in `<workspace>/feedback.jsonl`: rating, tags
+  (fixed list `TAGS`), text, settings, recipe, measurements of inputs and output. No audio. Export via
+  `/api/feedback/export`. Daan sends that file to Claude for tuning.
+- **Cleanup:** `workspace.cleanup_projects` keeps the 20 newest folders in Projects/ that match the
+  Layerforge name pattern and contain project.json or inputs/ (Daan agreed); runs at start and after
+  each Generate. Favourites and feedback.jsonl are never touched.
