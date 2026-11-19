@@ -5,9 +5,9 @@ Layerforge maakt **nieuwe drum one-shots** uit 2 tot 4 van je eigen samples van 
 bijvoorbeeld de body van kick 1 en de top van kick 2. Layerforge mengt die stukken tot nieuwe samples.
 Alles draait op je eigen computer. Er gaat niets naar internet.
 
-> **Status: mijlpaal M3c.** Bass en synth mengen nu op een eigen manier ("morph"): één klank met één
-> gezamenlijke volumecurve en lengte. Drums werken zoals in M3b.
-> Luister-gereedschap (solo, mono, loop) komt in mijlpaal M4.
+> **Status: mijlpaal M4.** Luister- en bewerk-gereedschap: spectrogram met verschuifbare bandgrenzen,
+> golfvorm met verschuifbare tijdzones, Trim per sample, Solo, Mono, Loop en een Advanced-paneel.
+> Test met de [luister-checklist](docs/LISTENING_CHECKLIST.md).
 
 ## Downloaden
 
@@ -55,6 +55,24 @@ Laat het zwarte venster openstaan zolang je Layerforge gebruikt. Sluit het venst
    **geen geluid** bewaard: alleen de getallen van de blend en jouw oordeel, één regel tekst per keer
    (een paar kB) in het bestand `feedback.jsonl` in je Layerforge-map. Met **Export feedback** bovenaan
    download je alles in één bestand. Stuur dat naar Claude: dan worden de profielen ermee bijgesteld.
+
+## Luisteren en bijstellen (M4)
+
+- **Spectrogram** (het gekleurde vlak bij elk sample): laag onderaan, hoog bovenaan. De oranje
+  **horizontale lijnen** zijn de bandgrenzen. Sleep een lijn omhoog of omlaag om een band groter of
+  kleiner te maken. Dat geldt voor alle samples tegelijk.
+- **Golfvorm** daaronder: de oranje **verticale lijnen** zijn de tijdzones (A = Attack, S = Sustain,
+  T = Tail), gemeten vanaf de klap van elk sample. Sleep ze om de zones te verschuiven. Klik ergens anders
+  in de golfvorm om af te spelen.
+- **Trim**: maak een sample zachter of harder in de blend (-12 tot +12 dB). Layerforge maakt alle samples
+  eerst even luid; Trim komt daar bovenop.
+- **Solo**: speel alleen een groep (Low, Mid, High) of één band af, van je samples én van de resultaten.
+- **Mono**: luister in mono (links + rechts samen). Handig om te checken of het laag vol blijft.
+- **Loop**: speelt het geluid steeds opnieuw af.
+- **Alt-klik** (Mac: Option-klik) op een nummer bij Direction: hoor precies dat deel van dat sample.
+- **Advanced** (onder Direction): filter order, onset guard, uitlijnen op de omhullende, crossover check,
+  saturation (warmte/vervorming), en de bandgrenzen en tijdzones als getallen. **Reset to type defaults**
+  zet alles terug. Een ander Sound type kiezen zet ook alles terug.
 
 **Seed en Lock.** De seed is het startgetal voor het toeval. Elke klik op Generate kiest een nieuwe seed,
 dus je krijgt steeds nieuwe variaties. Zet **Lock** aan om dezelfde seed te houden: met dezelfde samples,

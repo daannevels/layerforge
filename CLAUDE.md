@@ -60,8 +60,9 @@ Phase 2 = a JUCE/VST3 port in C++, so the engine must stay portable. The full br
 - M3b (Daan's feedback on M3): instrument profiles, bass + synth types, length/decay matching,
   feedback button (no audio stored), project cleanup — done ✅ (drums "work perfectly" per Daan)
 - M3c (Daan's feedback on M3b: bass/synth too close to the originals, tails of one layer ring on):
-  tonal blending (shared volume curve + spectral morph) for bass and synth — done, awaiting OK
+  tonal blending (shared volume curve + spectral morph) for bass and synth — done ✅
 - M4 Editing and listening tools (spectrogram/waveform editing, solo, mono, loop, A/B, Advanced)
+  — done, awaiting OK
 - M5 Polish and port-readiness (README, ENGINE_SPEC, PROJECT_SUMMARY, golden vectors, tag v0.1.0)
 
 ## Decisions made so far
@@ -143,3 +144,13 @@ Phase 2 = a JUCE/VST3 port in C++, so the engine must stay portable. The full br
   and lengths now land between the inputs instead of at the longest.
 - Recipe schema_version 2 (tonal fields); version-1 recipes still load and render identically.
 - Pitch warning compares pitch CLASSES (octaves are fine); Daan's "C" bass pack contains an F1 and a D2.
+- **M4 tools:** "solo cell" became "solo part": Alt/Option-click a source button in the Direction table
+  plays that sample's Low/Mid/High group (the grid is gone). Solo/Mono/Loop apply to all playback.
+  Solo previews come from `POST /api/preview` (server/preview.py) with the ENGINE band split (exact; the
+  groups sum to the sample), cached client-side per source/selection/edges/order. Mono = a 1-channel
+  GainNode (browser downmix (L+R)/2). Band edges (spectrogram, log axis 20 Hz-20 kHz, JS radix-2 FFT
+  2048) and zone edges (waveform, measured from each sample's onset_ms from the upload) are shared by all
+  slots and sent as `advanced` with Generate; `jobs.parse_advanced` validates them (edges >= 20 Hz,
+  neighbours >= 1.2x apart, <= 0.45 sr; zones 1..3000 ms; guard 0..5 ms; drive 0..6 dB; order 1-3).
+  The view window of a slot = min(length, max(4 x the type's default Sustain|Tail edge, 0.5 s)).
+- docs/LISTENING_CHECKLIST.md holds the five listening questions (in Dutch, for Daan).
