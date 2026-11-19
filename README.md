@@ -5,8 +5,8 @@ Layerforge maakt **nieuwe drum one-shots** uit 2 tot 4 van je eigen samples van 
 bijvoorbeeld de body van kick 1 en de top van kick 2. Layerforge mengt die stukken tot nieuwe samples.
 Alles draait op je eigen computer. Er gaat niets naar internet.
 
-> **Status: mijlpaal M3b.** Elk instrument heeft nu een eigen profiel (ook **bass** en **synth**),
-> lengtes van samples worden netjes op elkaar afgestemd, en je kunt per variatie feedback geven.
+> **Status: mijlpaal M3c.** Bass en synth mengen nu op een eigen manier ("morph"): één klank met één
+> gezamenlijke volumecurve en lengte. Drums werken zoals in M3b.
 > Luister-gereedschap (solo, mono, loop) komt in mijlpaal M4.
 
 ## Downloaden
@@ -71,8 +71,8 @@ Daar wint altijd één sample. Variaties waarbij het laag toch zwakker wordt, go
 | clap | – | op de omhullende (de klapjes), ±3 ms | van één clap | Mid |
 | closedhat, openhat, crash | – | boven 300 Hz op de omhullende | van één sample | High |
 | perc | – | onder 2 kHz op de golf, erboven op de omhullende | van één sample | Mid |
-| bass | tot 300 Hz | overal op de golf (fase) | mag mengen | Low |
-| synth | tot 200 Hz | onder 5 kHz op de golf | mag mengen | Mid |
+| bass | tot 250 Hz (Sub + Body) | laag op de golf; erboven **morph** | morph | Low |
+| synth | tot 200 Hz | laag op de golf; erboven **morph** | morph | Mid |
 
 - **Uitlijnen op de golf** = de golven precies op elkaar leggen, zodat ze elkaar versterken in plaats van
   uitdoven. Belangrijk voor tonen (kick, bass, synth).
@@ -83,8 +83,16 @@ Daar wint altijd één sample. Variaties waarbij het laag toch zwakker wordt, go
   de "lengte-leider" sterven even snel uit als de leider. De leider is het sample dat jij kiest bij de groep
   in de laatste kolom. Staat die op Free, dan kiest Layerforge per variatie een lengte tussen de kortste en
   de langste in.
-- **Bass en synth**: bij elk sample zie je de toonhoogte (bijv. A1). Hebben je samples verschillende
-  noten, dan krijg je een waarschuwing, want die botsen. Samples op dezelfde noot mengen het best.
+- **Bass en synth mengen anders dan drums.** Drums worden per band en per tijdzone uit stukjes van je
+  samples opgebouwd. Bij bass en synth gebeurt dat alleen in het laag (één sample, voor een strak laag).
+  Daarboven "morpht" Layerforge de klankkleur van alle samples tot één nieuwe klank: per frequentie een
+  mengsel van de samples, met één fase, zodat het als één geheel klinkt en niet als losse lagen.
+  Kies je bij een groep een sample, dan weegt dat sample zwaarder (70%) in die groep.
+- **Eén volumecurve voor bass en synth.** Alle lagen volgen hetzelfde volumeverloop en stoppen samen,
+  met één gezamenlijke uitfade. Kies je bij de lengte-groep (bass: Low, synth: Mid) een sample, dan krijgt
+  de blend precies de lengte van dat sample. Op Free ligt de lengte tussen je kortste en langste sample in.
+- **Toonhoogte**: bij bass en synth zie je per sample de noot (bijv. C2). Octaven (C2 en C4) passen bij
+  elkaar. Hebben je samples echt andere noten (C en D), dan krijg je een waarschuwing, want die botsen.
 
 ## Opruimen
 

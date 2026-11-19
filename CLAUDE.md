@@ -58,7 +58,9 @@ Phase 2 = a JUCE/VST3 port in C++, so the engine must stay portable. The full br
 - M3 Variations (planner, quality gate, selection, results grid, workspace, `render`) + simple
   Low/Mid/High direction UI (Daan's feedback on M2) — done ✅
 - M3b (Daan's feedback on M3): instrument profiles, bass + synth types, length/decay matching,
-  feedback button (no audio stored), project cleanup — done, awaiting OK
+  feedback button (no audio stored), project cleanup — done ✅ (drums "work perfectly" per Daan)
+- M3c (Daan's feedback on M3b: bass/synth too close to the originals, tails of one layer ring on):
+  tonal blending (shared volume curve + spectral morph) for bass and synth — done, awaiting OK
 - M4 Editing and listening tools (spectrogram/waveform editing, solo, mono, loop, A/B, Advanced)
 - M5 Polish and port-readiness (README, ENGINE_SPEC, PROJECT_SUMMARY, golden vectors, tag v0.1.0)
 
@@ -124,3 +126,20 @@ Phase 2 = a JUCE/VST3 port in C++, so the engine must stay portable. The full br
 - **Cleanup:** `workspace.cleanup_projects` keeps the 20 newest folders in Projects/ that match the
   Layerforge name pattern and contain project.json or inputs/ (Daan agreed); runs at start and after
   each Generate. Favourites and feedback.jsonl are never touched.
+- **Tonal blending (M3c), `TypePreset.morph` (bass, synth); `engine/morph.py`:** drums are untouched.
+  (1) Shared volume curve: per input a dB gain curve on a 10 ms frame grid (`env_gain_db`, from the
+  origin) moves its envelope onto one target curve = the length leader's envelope, or (Free) an
+  alive-weighted dB average with a raised-cosine release ending at a target length between the inputs
+  (geometric mean, jittered). After the release the target is -120 dB (silence). The attack keeps its own
+  shape (gain 0 dB during the Attack zone, then a 3-frame ramp, 5-frame smoothing). Decay slopes are 0.
+  (2) Spectral morph for `morph_bands` (all bands above the single-owner low end): STFT (sqrt periodic
+  Hann, 1024 at 44.1/48 kHz, hop/4, exact OLA), |Y| = power mean (exponent `morph_power`, base 0.5) of
+  the inputs' magnitudes with per-bin weights (band weights interpolated in log-frequency, times
+  `env_alive`), phase of the low leader below 2x the low crossover, else of the strongest input. The
+  morph output is guarded at the origin and split with the same filters; its morph bands are added to the
+  low bands from the cells. Group choice -> that input gets weight 0.7 in the group's bands.
+  Measured on Daan's TPS Ignite synths/basses (kept only in the scratchpad, never committed): the nearest-
+  input spectral distance of the worst variation rose from 0.6 dB (patchwork = almost a copy) to >= 4 dB,
+  and lengths now land between the inputs instead of at the longest.
+- Recipe schema_version 2 (tonal fields); version-1 recipes still load and render identically.
+- Pitch warning compares pitch CLASSES (octaves are fine); Daan's "C" bass pack contains an F1 and a D2.
