@@ -148,3 +148,22 @@ def anchor_shifts(anchors: list[int]) -> list[int]:
     """Step 3: delay per input (>= 0) so all anchors land on max(anchors)."""
     top = max(anchors)
     return [top - a for a in anchors]
+
+
+NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+
+
+def note_name(f0_hz: float) -> str:
+    """Nearest note name for a pitch, e.g. 55 Hz -> 'A1' (A4 = 440 Hz); '' for 0."""
+    if f0_hz <= 0:
+        return ""
+    midi = int(round(69 + 12 * np.log2(f0_hz / 440.0)))
+    return f"{NOTE_NAMES[midi % 12]}{midi // 12 - 1}"
+
+
+def pitch_spread_cents(f0s: list[float]) -> float:
+    """Largest distance in cents between detected pitches (0 when fewer than two were found)."""
+    f = [v for v in f0s if v > 0]
+    if len(f) < 2:
+        return 0.0
+    return float(1200 * np.log2(max(f) / min(f)))

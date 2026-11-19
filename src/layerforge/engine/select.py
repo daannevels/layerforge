@@ -12,6 +12,7 @@ from typing import Callable
 import numpy as np
 
 from layerforge.engine import constants as C
+from layerforge.engine.analysis import note_name, pitch_spread_cents
 from layerforge.engine.features import features, zscore
 from layerforge.engine.planner import plan_candidate, prepare
 from layerforge.engine.presets import get_preset
@@ -152,6 +153,12 @@ def generate(inputs: list[np.ndarray], names: list[str], keepmap: KeepMap, setti
             done += 1
             report(0.05 + 0.8 * done / pool, f"Trying blend {done} of {pool}")
     notes: list[str] = []
+    if preset.pitched:
+        f0s = [a.f0_hz for a in prep.analyses]
+        if pitch_spread_cents(f0s) > C.PITCH_WARN_CENTS:
+            found = ", ".join(note_name(f) or "?" for f in f0s)
+            notes.append(f"The samples have different pitches ({found}), so their layers can clash. "
+                         "Samples on the same note blend best.")
     ok = [k for k, cd in enumerate(cands) if cd.passed]
     # drop exact duplicates (same features), keeping the first
     uniq: list[int] = []

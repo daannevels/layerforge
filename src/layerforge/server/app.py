@@ -27,9 +27,11 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from layerforge import __version__
 from layerforge.audio_io import AudioError, read_audio
 from layerforge.engine import constants as C
+from layerforge.engine.analysis import estimate_f0, find_onset
 from layerforge.engine.presets import GROUP_NAMES, PRESETS, ZONE_NAMES
 from layerforge.server.jobs import Job, RequestError, Upload, new_job_id, parse_request, run_generate
-from layerforge.server.workspace import new_project_dir, workspace_root
+from layerforge.server import feedback
+from layerforge.server.workspace import cleanup_projects, new_project_dir, workspace_root
 
 HOST = "127.0.0.1"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024          # bytes: largest accepted upload (50 MB)
@@ -93,9 +95,10 @@ def presets_payload() -> dict:
         "max_upload_bytes": MAX_UPLOAD_BYTES,
         "extensions": list(ALLOWED_UPLOAD_EXTENSIONS),
         "groups": list(GROUP_NAMES),
+        "feedback_tags": list(feedback.TAGS),
         "variations": {"min": C.MIN_VARIATIONS, "max": C.MAX_VARIATIONS, "default": C.DEFAULT_VARIATIONS},
         "amount_default": C.DEFAULT_VARIATION_AMOUNT,
-        "types": {k: {"bands": list(p.band_names), "band_edges_hz": list(p.band_edges_hz),
+        "types": {k: {"pitched": p.pitched, "bands": list(p.band_names), "band_edges_hz": list(p.band_edges_hz),
                       "zone_edges_ms": list(p.zone_edges_ms),
                       "groups": [[p.band_names[b] for b in range(len(p.band_names)) if p.band_groups[b] == g]
                                  for g in range(len(GROUP_NAMES))]}
@@ -180,6 +183,13 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     self._json(HTTPStatus.OK, job.snapshot())
             elif path.startswith("/api/file/"):
                 self._send_file(path.rsplit("/", 1)[1], query)
+            elif path == "/api/feedback/count":
+                self._json(HTTPStatus.OK, {"count": feedback.count(app.root)})
+            elif path == "/api/feedback/export":
+                fb = app.root / feedback.FEEDBACK_FILE
+                body = fb.read_bytes() if fb.is_file() else b""
+                self._send(HTTPStatus.OK, body, "application/x-ndjson",
+                           {"Content-Disposition": f'attachment; filename="layerforge_{feedback.FEEDBACK_FILE}"'})
             elif path.startswith("/api/recipe/"):
                 wav = self._known_file(path.rsplit("/", 1)[1])
                 rec = wav.with_suffix(".json") if wav else None
@@ -220,6 +230,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 self._generate()
             elif path == "/api/star":
                 self._star()
+            elif path == "/api/feedback":
+                self._feedback()
             elif path == "/api/open-folder":
                 ok = open_folder(app.root)
                 self._json(HTTPStatus.OK if ok else HTTPStatus.INTERNAL_SERVER_ERROR,
@@ -266,6 +278,23 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             threading.Thread(target=run_generate, daemon=True,
                              args=(job, req, app.root, new_project_dir, app.register_file)).start()
             self._json(HTTPStatus.OK, {"job": job.id, "seed": req.seed})
+
+        def _feedback(self) -> None:
+            length = self._length(MAX_JSON_BYTES)
+            if length is None:
+                return
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+                wav = self._known_file(str(body["file"]))
+                if wav is None or not wav.is_file() or wav.parent.name != "variations":
+                    self._error(HTTPStatus.NOT_FOUND, "this variation is no longer on disk")
+                    return
+                rec = feedback.build_record(wav, body.get("rating", 0), body.get("tags", []), body.get("text", ""))
+            except (json.JSONDecodeError, KeyError, TypeError, AttributeError, feedback.FeedbackError) as exc:
+                self._error(HTTPStatus.BAD_REQUEST, str(exc) or "bad request")
+                return
+            n = feedback.append(app.root, rec)
+            self._json(HTTPStatus.OK, {"ok": True, "count": n})
 
         def _star(self) -> None:
             length = self._length(MAX_JSON_BYTES)
@@ -325,11 +354,14 @@ def make_server(app: App, port: int = 8766, tries: int = 20) -> ThreadingHTTPSer
 
 def serve(port: int = 8766, open_browser: bool = True) -> None:
     app = App()
+    removed = cleanup_projects(app.root)
     httpd = make_server(app, port)
     url = f"http://{HOST}:{app.port}/?token={app.token}"
     print(f"Layerforge {__version__} is running. Your files: {app.root}")
     print(f"Open this address in your browser if it did not open by itself:\n  {url}")
     print("Keep this window open while you use Layerforge. Close it to quit.")
+    if removed:
+        print(f"Cleaned up {len(removed)} old project folder(s) (the newest are kept).")
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:

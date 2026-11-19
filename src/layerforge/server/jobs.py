@@ -21,6 +21,7 @@ from layerforge.engine.presets import GROUP_NAMES, PRESETS, group_keepmap
 from layerforge.engine.render import render_simple_stack
 from layerforge.engine.select import generate
 from layerforge.engine.types import Settings
+from layerforge.server.workspace import cleanup_projects
 
 
 @dataclass
@@ -165,6 +166,7 @@ def run_generate(job: Job, req: GenerateRequest, root: Path,
             "notes": result.notes,
         }
         (proj / "project.json").write_text(json.dumps(project, indent=1))
+        cleanup_projects(root)
         msg = f"{len(cards)} variation{'s' if len(cards) != 1 else ''} in {time.perf_counter() - t0:.1f} s"
         job.update(status="done", progress=1.0, message=msg,
                    result={"project": proj.name, "variations": cards, "stack": stack_file,

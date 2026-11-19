@@ -146,3 +146,62 @@ def test_generate_rejects_bad_requests(server):
                  b"[1, 2]"]:
         status, _ = request(server, "POST", "/api/generate", dict(TOK, **{"Content-Length": str(len(body))}), body)
         assert status == 400
+
+
+def _generate(server, n=2):
+    ids = []
+    for seed in (1, 2):
+        x = np.concatenate([np.zeros(500), make_kick(seed=seed, dur=0.3)])[None] * 0.8
+        ids.append(json.loads(upload(server, wav_bytes(x, 48000), f"k{seed}.wav")[1])["id"])
+    req = json.dumps({"sound_type": "kick", "variations": n, "amount": 50, "seed": 1,
+                      "inputs": [{"id": i} for i in ids], "groups": [0, None, None]}).encode()
+    job = json.loads(request(server, "POST", "/api/generate", dict(TOK, **{"Content-Length": str(len(req))}), req)[1])["job"]
+    for _ in range(400):
+        snap = json.loads(request(server, "GET", f"/api/jobs/{job}", TOK)[1])
+        if snap["status"] != "running":
+            return snap
+        time.sleep(0.05)
+    raise AssertionError("job did not finish")
+
+
+def post(server, path, obj):
+    body = json.dumps(obj).encode()
+    return request(server, "POST", path, dict(TOK, **{"Content-Length": str(len(body))}), body)
+
+
+def test_feedback_is_small_and_has_no_audio(server, tmp_path):
+    snap = _generate(server)
+    fid = snap["result"]["variations"][1]["file"]
+    status, body = post(server, "/api/feedback", {"file": fid, "rating": -1, "tags": ["two_layers", "tail_wrong"],
+                                                 "text": "staart van de andere kick hoorbaar"})
+    assert status == 200, body
+    assert json.loads(body)["count"] == 1
+    line = (tmp_path / "feedback.jsonl").read_text().strip()
+    rec = json.loads(line)
+    assert rec["rating"] == -1 and rec["tags"] == ["tail_wrong", "two_layers"]
+    assert rec["recipe"]["inputs"][0]["file"] == "inputs/input1.wav"
+    assert len(rec["inputs"]) == 2 and "decay_s" in rec["inputs"][0] and "features" in rec["output"]
+    assert len(line.encode()) < 20_000          # a few kB, no audio
+    assert post(server, "/api/feedback", {"file": fid, "rating": 5})[0] == 400
+    assert post(server, "/api/feedback", {"file": fid, "rating": 1, "tags": ["nonsense"]})[0] == 400
+    status, data = request(server, "GET", "/api/feedback/export?token=test-token")
+    assert status == 200 and data.decode().strip() == line
+    assert json.loads(request(server, "GET", "/api/feedback/count", TOK)[1])["count"] == 1
+
+
+def test_cleanup_keeps_newest_projects_only(tmp_path):
+    from layerforge.server.workspace import cleanup_projects, workspace_root
+    root = workspace_root(tmp_path)
+    for k in range(25):
+        p = root / "Projects" / f"202611{k + 1:02d}-120000_kick"
+        (p / "inputs").mkdir(parents=True)
+        (p / "project.json").write_text("{}")
+    (root / "Projects" / "my own folder").mkdir()
+    (root / "Projects" / "20260101-000000_kick-note").mkdir()   # no project.json/inputs: not ours
+    (root / "Favourites" / "keep.wav").write_bytes(b"x")
+    removed = cleanup_projects(root, keep=20)
+    assert len(removed) == 5 and removed[0] == "20261101-120000_kick"
+    left = sorted(p.name for p in (root / "Projects").iterdir())
+    assert "my own folder" in left and "20260101-000000_kick-note" in left
+    assert len([n for n in left if n.endswith("_kick")]) == 20
+    assert (root / "Favourites" / "keep.wav").is_file()

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import re
+import shutil
 import time
 from pathlib import Path
 
@@ -29,3 +31,25 @@ def new_project_dir(root: Path, sound_type: str) -> Path:
     (path / "inputs").mkdir(parents=True)
     (path / "variations").mkdir()
     return path
+
+
+KEEP_PROJECTS = 20   # count: newest project folders kept; older ones are deleted (Favourites are never touched)
+PROJECT_RE = re.compile(r"^\d{8}-\d{6}_[a-z]+(-\d+)?$")
+
+
+def cleanup_projects(root: Path, keep: int = KEEP_PROJECTS) -> list[str]:
+    """Delete all but the `keep` newest project folders in Projects/. Only folders that look exactly
+    like ones Layerforge made (name pattern + project.json or an inputs/ folder) are ever removed.
+    Returns the names of the removed folders."""
+    projects = root / "Projects"
+    if not projects.is_dir():
+        return []
+    ours = sorted((p for p in projects.iterdir()
+                   if p.is_dir() and not p.is_symlink() and PROJECT_RE.match(p.name)
+                   and ((p / "project.json").is_file() or (p / "inputs").is_dir())),
+                  key=lambda p: p.name)
+    removed = []
+    for p in ours[:max(len(ours) - keep, 0)]:
+        shutil.rmtree(p, ignore_errors=True)
+        removed.append(p.name)
+    return removed
