@@ -25,6 +25,7 @@ class Analysis:
     decay_s: float      # s: peak to the last point above DECAY_DB
     attack_s: float     # s: envelope 10 % -> 90 %
     rms_as: float       # linear RMS over the Attack + Sustain zones
+    f0_hz: float = 0.0  # Hz: detected pitch (0 = none found)
 
 
 @dataclass
@@ -61,7 +62,8 @@ class Settings:
     zone_edges_ms: list[float] | None = None    # None = preset default
     filter_order: int = FILTER_ORDER_DEFAULT
     guard_ms: float = GUARD_MS_DEFAULT
-    relaxed_alignment: bool | None = None       # None = preset default
+    relaxed_alignment: bool | None = None       # None/True = noise-like bands use envelope alignment;
+                                                # False = waveform alignment in every band
     crossover_check: bool = True
     drive_db: float | None = None               # None = preset default
     trims_db: list[float] = field(default_factory=list)  # per input
@@ -81,6 +83,8 @@ class InputSpec:
     shift: int           # samples: anchor alignment delay (>= 0)
     gain_db: float       # level match + trim
     file: str = ""       # input file relative to the project folder (for `layerforge render`)
+    decay_slope_db_s: float = 0.0  # dB/s (<= 0): extra exponential fade for decay matching
+    decay_start: int = 0           # samples (input timeline, before the shift): where that fade starts
 
 
 @dataclass

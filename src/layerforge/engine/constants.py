@@ -44,7 +44,6 @@ CROSSFADE_MAX_MS = 20.0        # ms: longest zone crossfade
 # --- Keep-map ------------------------------------------------------------------
 KEEP_STRENGTH_MIN = 0.25       # fraction: weakest keep strength (25 %)
 KEEP_STRENGTH_DEFAULT = 1.0    # fraction: default keep strength (100 %)
-LOW_END_SINGLE_OWNER_HZ = 200.0  # Hz: bands whose upper edge is <= this get exactly one owner
 
 # --- Step 7: alignment ----------------------------------------------------------
 ALIGN_MAX_LAG_MS = 1.5         # ms: lag search range is +- this
@@ -52,7 +51,24 @@ ALIGN_WINDOW_MS = 150.0        # ms: energy of the sum is measured over this win
 ALIGN_MIN_GAIN_DB = 0.5        # dB: an alignment is applied only if it raises the sum energy this much
 CROSSOVER_R_MIN = 0.5          # ratio: crossover check acts when E(a+b)/(E(a)+E(b)) is below this
 CROSSOVER_OCTAVES = 1.0        # octaves: width of the band-pass around a shared band edge
-RELAXED_MIN_HZ = 2000.0        # Hz: relaxed types skip per-band alignment in bands whose lower edge >= this
+ENVELOPE_WINDOW_MS = 1.0       # ms: RMS window of the envelopes used to align noise-like bands
+ENVELOPE_ALIGN_MIN_GAIN = 0.02  # fraction: an envelope lag is applied only if it raises the envelope
+                                # correlation by at least this much over lag 0
+
+# --- Length (decay matching) -------------------------------------------------------
+DECAY_MATCH = True             # every input longer than the target length is made to die away as fast
+                               # as the target (an extra exponential fade after the Attack zone)
+TAIL_OWNER_MIN_RATIO = 0.7     # ratio: inputs whose decay is below this x target never own open Tail cells
+JITTER_LENGTH = 0.5            # without a length leader, the target decay moves exp(U(-1,1) * this * j *
+                               # ln(longest / shortest)) around the median, clamped to [shortest, longest]
+
+# --- Pitch (pitched types only, information for the user) -----------------------------
+F0_MIN_HZ = 25.0               # Hz: lowest detectable pitch
+F0_MAX_HZ = 2000.0             # Hz: highest detectable pitch
+F0_SEGMENT_MS = 250.0          # ms: analysed segment, starting F0_SKIP_MS after the onset
+F0_SKIP_MS = 20.0              # ms
+F0_MIN_CLARITY = 0.5           # normalised autocorrelation needed to report a pitch
+PITCH_WARN_CENTS = 50.0        # cents: inputs further apart than this get a warning
 
 # --- Section 6: variations ------------------------------------------------------
 POOL_FACTOR = 6                # candidates per requested variation (pool size P = 6 N)
@@ -71,6 +87,8 @@ GATE_LOW_END_HZ = 200.0        # Hz: low-end coherence is measured below this
 GATE_LOW_END_R_MIN = 0.5       # ratio: drop candidates whose low-end R is below this
 GATE_PEAK_OVER_BASE_DB = 12.0  # dB: drop candidates whose pre-normalisation peak exceeds the base by more
 FEATURE_WINDOW_MS = 150.0      # ms: spectral centroid window after the start
+POOL_MAX_WORKERS = 6           # count: most worker processes for the candidate pool
+POOL_PARALLEL_MIN_WORK = 4_000_000  # candidate-samples: use worker processes above this much work
 DUPLICATE_TOL = 1e-9           # feature distance below which two candidates count as identical
 
 # --- Step 9: stereo -------------------------------------------------------------

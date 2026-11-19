@@ -11,13 +11,13 @@ from dataclasses import dataclass
 import numpy as np
 
 from layerforge.engine import constants as C
-from layerforge.engine.align import best_align, best_coherence_shift, coherence_ratio, shift
+from layerforge.engine.align import best_align, best_coherence_shift, best_envelope_lag, coherence_ratio, shift
 from layerforge.engine.analysis import analyse, anchor_shifts, level_match_gains_db
 from layerforge.engine.bands import bandpass
 from layerforge.engine.mix import all_zone_windows, band_lower_edge, band_weights, resolve_cells
 from layerforge.engine.presets import get_preset
 from layerforge.engine.render import BandCache, prepare_bands, zone_edges_samples
-from layerforge.engine.types import Analysis, InputSpec, KeepMap, Owner, Recipe, Settings
+from layerforge.engine.types import KEEP, Analysis, InputSpec, KeepMap, Owner, Recipe, Settings
 from layerforge.engine.windows import crossfade_width_s, zone_crossfades
 
 
@@ -37,7 +37,7 @@ def resolved_settings(settings: Settings) -> dict:
         "zones": zones,
         "order": settings.filter_order,
         "guard_ms": max(float(settings.guard_ms), 0.0),
-        "relaxed": p.relaxed_alignment if settings.relaxed_alignment is None else settings.relaxed_alignment,
+        "envelope_align": settings.relaxed_alignment is not False,
         "crossover": settings.crossover_check,
         "drive_db": p.saturation_drive_db if settings.drive_db is None else float(settings.drive_db),
     }
@@ -45,7 +45,48 @@ def resolved_settings(settings: Settings) -> dict:
 
 def analyse_inputs(inputs: list[np.ndarray], sr: int, sound_type: str,
                    zone_edges_ms: list[float]) -> list[Analysis]:
-    return [analyse(x, sr, zone_edges_ms, centroid_anchor=(sound_type == "clap")) for x in inputs]
+    p = get_preset(sound_type)
+    return [analyse(x, sr, zone_edges_ms, centroid_anchor=p.centroid_anchor, pitched=p.pitched)
+            for x in inputs]
+
+
+def noise_bands(sound_type: str, envelope_align: bool) -> list[bool]:
+    """Per band: noise-like (envelope alignment, no crossover check). Decided on the DEFAULT edges."""
+    p = get_preset(sound_type)
+    lowers = [0.0] + list(p.band_edges_hz)
+    return [envelope_align and lo >= p.noise_from_hz for lo in lowers]
+
+
+def group_leader(sound_type: str, keepmap: KeepMap, group: int) -> int | None:
+    """The input the user chose for a group: the one with the most keep cells in its bands."""
+    p = get_preset(sound_type)
+    bands = [b for b, g in enumerate(p.band_groups) if g == group]
+    counts = [sum(c.state == KEEP for b in bands for c in keepmap.cells[i][b])
+              for i in range(len(keepmap.cells))]
+    best = max(range(len(counts)), key=lambda i: (counts[i], -i)) if counts else 0
+    return best if counts and counts[best] > 0 else None
+
+
+def target_decay(decays: list[float], leader: int | None, rng: np.random.Generator | None,
+                 j: float) -> float:
+    """Length of the blend (s, decay to DECAY_DB): the leader's decay, or else the median decay,
+    moved towards the shortest/longest input by the variation jitter."""
+    if leader is not None:
+        return decays[leader]
+    d = np.maximum(np.asarray(decays, dtype=np.float64), 1e-3)
+    t = float(np.median(d))
+    if rng is not None and j > 0:
+        span = np.log(d.max() / d.min())
+        t = float(np.clip(t * np.exp(rng.uniform(-1, 1) * C.JITTER_LENGTH * j * span), d.min(), d.max()))
+    return t
+
+
+def decay_slopes(decays: list[float], target: float) -> list[float]:
+    """Extra fade (dB/s, <= 0) per input so that an input longer than the target reaches DECAY_DB
+    at the target time: slope = DECAY_DB * (1/target - 1/decay)."""
+    if not C.DECAY_MATCH or target <= 0:
+        return [0.0] * len(decays)
+    return [C.DECAY_DB * (1.0 / target - 1.0 / d) if d > target else 0.0 for d in decays]
 
 
 def input_specs(names: list[str], analyses: list[Analysis], trims_db: list[float]) -> list[InputSpec]:
@@ -67,9 +108,12 @@ def cell_energies(mono: np.ndarray, windows: np.ndarray) -> np.ndarray:
 
 
 def plan_alignment(mono: np.ndarray, cells: list[list[list[Owner]]], energy: np.ndarray,
-                   edges: list[float], sr: int, origin: int, relaxed: bool, crossover: bool,
+                   edges: list[float], sr: int, origin: int, noise: list[bool], crossover: bool,
+                   envelope_ms: float = C.ALIGN_MAX_LAG_MS,
                    ) -> tuple[list[list[int]], list[list[int]], dict]:
-    """Step 7. mono: (inputs, bands, n) guarded band signals. Returns lags[b][i], pols[b][i], notes."""
+    """Step 7. mono: (inputs, bands, n) guarded band signals. Tonal bands: lag + polarity on the
+    waveform; noise-like bands (noise[b]): lag on the RMS envelope, no polarity, no crossover check.
+    Returns lags[b][i], pols[b][i], notes."""
     n_in, n_b, _ = mono.shape
     max_lag = int(round(C.ALIGN_MAX_LAG_MS * sr / 1000.0))
     win = int(round(C.ALIGN_WINDOW_MS * sr / 1000.0))
@@ -85,24 +129,29 @@ def plan_alignment(mono: np.ndarray, cells: list[list[list[Owner]]], energy: np.
             return None
         return max(owners, key=lambda i: (weights[b, i], band_energy[i, b], -i))
 
-    def is_relaxed(b: int) -> bool:
-        return relaxed and band_lower_edge(edges, b) >= C.RELAXED_MIN_HZ
-
+    env_lag = int(round(envelope_ms * sr / 1000.0))
+    env_win = int(round(C.ENVELOPE_WINDOW_MS * sr / 1000.0))
     for b in range(n_b):
         ref = dominant(b)
-        if ref is None or is_relaxed(b):
+        if ref is None:
             continue
         for i in range(n_in):
             if i == ref or weights[b, i] <= 0:
                 continue
-            k, p, g = best_align(mono[ref, b], mono[i, b], max_lag, origin, win, C.ALIGN_MIN_GAIN_DB)
-            lags[b][i], pols[b][i] = k, p
-            notes["align_gain_db"][f"{b}:{i}"] = round(g, 3)
+            if noise[b]:
+                k, g = best_envelope_lag(mono[ref, b], mono[i, b], env_lag, origin, win, env_win,
+                                         C.ENVELOPE_ALIGN_MIN_GAIN)
+                lags[b][i] = k
+                notes["align_gain_db"][f"{b}:{i}"] = f"env {round(100 * g, 1)}%"
+            else:
+                k, p, g = best_align(mono[ref, b], mono[i, b], max_lag, origin, win, C.ALIGN_MIN_GAIN_DB)
+                lags[b][i], pols[b][i] = k, p
+                notes["align_gain_db"][f"{b}:{i}"] = round(g, 3)
 
     if crossover:
         for b in range(n_b - 1):
             lo_owner, hi_owner = dominant(b), dominant(b + 1)
-            if lo_owner is None or hi_owner is None or lo_owner == hi_owner or is_relaxed(b + 1):
+            if lo_owner is None or hi_owner is None or lo_owner == hi_owner or noise[b + 1]:
                 continue
             fc = float(edges[b])
             half = 2.0 ** (C.CROSSOVER_OCTAVES / 2.0)
@@ -194,12 +243,22 @@ def plan_candidate(prep: Prepared, inputs: list[np.ndarray], keepmap: KeepMap,
         extra_ms = rng.uniform(-1, 1, (n_b, n_in)) * C.JITTER_ALIGN_MS * j
         trims = [float(v) for v in rng.uniform(-1, 1, n_b) * C.JITTER_TRIM_DB * j]
         drive = float(min(drive + rng.uniform(0, 1) * C.JITTER_DRIVE_DB * j, C.DRIVE_MAX_DB))
+    # length: one target decay for the whole blend; longer inputs are faded to it
+    preset = get_preset(prep.sound_type)
+    decays = [a.decay_s for a in prep.analyses]
+    length_leader = group_leader(prep.sound_type, keepmap, preset.length_group)
+    target = target_decay(decays, length_leader, rng if jitter else None, j)
+    slopes = decay_slopes(decays, target)
+    attack_n = int(round(rs["zones"][0] * sr / 1000.0))
+    specs = [InputSpec(**{**vars(s), "decay_slope_db_s": float(sl), "decay_start": s.onset + attack_n})
+             for s, sl in zip(prep.specs, slopes)]
+    tail_ok = [d >= C.TAIL_OWNER_MIN_RATIO * target for d in decays]
     recipe = Recipe(
         sound_type=prep.sound_type, sample_rate=sr, channels=prep.channels,
         length=prep.length, origin=prep.origin, band_edges_hz=edges, zone_edges_ms=zones,
         filter_order=rs["order"], guard_ms=rs["guard_ms"],
         crossfade_samples=crossfades_for(edges, zones, sr),
-        inputs=[InputSpec(**vars(s)) for s in prep.specs], cells=[],
+        inputs=specs, cells=[],
         lags=[[0] * n_in for _ in range(n_b)], polarities=[[1] * n_in for _ in range(n_b)],
         band_trims_db=trims, drive_db=drive, seed=int(seed), candidate=int(candidate),
         variation_amount=float(amount) if jitter else 0.0,
@@ -208,9 +267,15 @@ def plan_candidate(prep: Prepared, inputs: list[np.ndarray], keepmap: KeepMap,
     mono = bands.mean(axis=2)
     windows = all_zone_windows(prep.length, prep.origin, zone_edges_samples(zones, sr), recipe.crossfade_samples)
     energy = cell_energies(mono, windows)
-    recipe.cells = resolve_cells(keepmap, energy, edges, rng=rng if jitter else None, strengths=strengths)
+    transient = group_leader(prep.sound_type, keepmap, 2) if preset.single_attack else None
+    recipe.cells = resolve_cells(keepmap, energy, preset.single_owner_bands, rng=rng if jitter else None,
+                                 strengths=strengths, single_attack=preset.single_attack,
+                                 tail_ok=tail_ok, transient_leader=transient)
     recipe.lags, recipe.polarities, notes = plan_alignment(
-        mono, recipe.cells, energy, edges, sr, prep.origin, rs["relaxed"], rs["crossover"])
+        mono, recipe.cells, energy, edges, sr, prep.origin,
+        noise_bands(prep.sound_type, rs["envelope_align"]), rs["crossover"], preset.envelope_align_ms)
+    notes["target_decay_s"] = round(target, 4)
+    notes["length_leader"] = length_leader
     if jitter:
         weights = band_weights(recipe.cells, n_in)
         for b in range(n_b):

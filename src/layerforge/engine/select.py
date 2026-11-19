@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import multiprocessing
+import os
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -81,9 +85,30 @@ def evaluate(recipe: Recipe, inputs: list[np.ndarray], cache: BandCache, base_pe
     return Candidate(recipe, True, "", features(y, sr, default_edges), r, peak_db)
 
 
+_W: dict = {}   # per-process state of a pool worker (set by _worker_init)
+
+
+def _worker_init(prep, mono, keepmap, amount, seed, base, base_peak_db, default_edges,
+                 shared: dict | None = None) -> None:
+    if shared is None:
+        shared = {bands_key(base, 1): prepare_bands(base, mono)}
+    _W.update(prep=prep, mono=mono, keepmap=keepmap, amount=amount, seed=seed,
+              base_peak_db=base_peak_db, edges=default_edges,
+              cache=BandCache(size=1, shared=shared))
+
+
+def _worker_eval(c: int) -> Candidate:
+    """Plan and judge candidate c (> 0) with its own generator default_rng([seed, c])."""
+    w = _W
+    rng = np.random.default_rng([int(w["seed"]), c])
+    recipe = plan_candidate(w["prep"], w["mono"], w["keepmap"], rng, w["amount"], c, w["seed"], w["cache"])
+    return evaluate(recipe, w["mono"], w["cache"], w["base_peak_db"], w["edges"])
+
+
 def generate(inputs: list[np.ndarray], names: list[str], keepmap: KeepMap, settings: Settings,
              n: int, amount: float, seed: int,
-             progress: Callable[[float, str], None] | None = None) -> GenerateResult:
+             progress: Callable[[float, str], None] | None = None,
+             workers: int | None = None) -> GenerateResult:
     """Plan a pool of P = POOL_FACTOR * n candidates (candidate 0 = base), gate them, pick n
     clearly different ones by greedy max-min over z-scored features, render those in full."""
     n = int(np.clip(n, C.MIN_VARIATIONS, C.MAX_VARIATIONS))
@@ -100,13 +125,32 @@ def generate(inputs: list[np.ndarray], names: list[str], keepmap: KeepMap, setti
     shared = {bands_key(base, 1): prepare_bands(base, mono, cache)}
     for a in shared.values():
         a.setflags(write=False)
-    cands: list[Candidate] = [base_cand]
-    local = BandCache(size=1, shared=shared)
+    cands: list[Candidate] = [base_cand] + [None] * (pool - 1)  # type: ignore[list-item]
+    args = (prep, mono, keepmap, amount, seed, base, base_cand.peak_db, preset.band_edges_hz)
+    work = (pool - 1) * prep.length * len(inputs)
+    if workers is None:
+        workers = min(C.POOL_MAX_WORKERS, max((os.cpu_count() or 1) - 1, 1)) \
+            if work >= C.POOL_PARALLEL_MIN_WORK else 1
+    done = 1
+    if workers > 1 and pool > 2:
+        # every candidate has its own random generator and is computed the same way in any
+        # process, so the result does not depend on the number of workers
+        try:
+            ctx = multiprocessing.get_context("spawn")
+            with ProcessPoolExecutor(workers, mp_context=ctx, initializer=_worker_init, initargs=args) as ex:
+                futures = {ex.submit(_worker_eval, c): c for c in range(1, pool)}
+                for fut in as_completed(futures):
+                    cands[futures[fut]] = fut.result()
+                    done += 1
+                    report(0.05 + 0.8 * done / pool, f"Trying blend {done} of {pool}")
+        except (OSError, RuntimeError, BrokenProcessPool, EOFError, ImportError, AttributeError):
+            pass  # worker processes unavailable here: the loop below does the remaining candidates
+    _worker_init(*args, shared=shared)
     for c in range(1, pool):
-        rng = np.random.default_rng([int(seed), c])   # one generator per candidate
-        cands.append(evaluate(plan_candidate(prep, mono, keepmap, rng, amount, c, seed, local),
-                              mono, local, base_cand.peak_db, preset.band_edges_hz))
-        report(0.05 + 0.8 * (c + 1) / pool, f"Trying blend {c + 1} of {pool}")
+        if cands[c] is None:
+            cands[c] = _worker_eval(c)
+            done += 1
+            report(0.05 + 0.8 * done / pool, f"Trying blend {done} of {pool}")
     notes: list[str] = []
     ok = [k for k, cd in enumerate(cands) if cd.passed]
     # drop exact duplicates (same features), keeping the first

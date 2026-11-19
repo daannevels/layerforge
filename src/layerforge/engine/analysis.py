@@ -82,8 +82,41 @@ def rms_attack_sustain(x: np.ndarray, onset: int, sr: float, edge2_ms: float) ->
     return float(np.sqrt(np.mean(seg ** 2))) if seg.size else 0.0
 
 
+def estimate_f0(x: np.ndarray, sr: float, onset: int) -> float:
+    """Pitch in Hz from the normalised autocorrelation of a segment after the attack; 0 if unclear.
+    The shortest lag whose correlation is within 10 % of the best one wins (avoids octave errors)."""
+    m = to_mono(x)
+    a = onset + int(round(C.F0_SKIP_MS * sr / 1000.0))
+    seg = m[a:a + int(round(C.F0_SEGMENT_MS * sr / 1000.0))]
+    lo, hi = int(sr / C.F0_MAX_HZ), int(sr / C.F0_MIN_HZ)
+    if seg.size < 2 * hi or not np.any(seg):
+        seg = m[onset:onset + 2 * hi + 1]
+        if seg.size < 2 * hi or not np.any(seg):
+            return 0.0
+    seg = (seg - seg.mean()) * np.hanning(seg.size)
+    nfft = 1 << int(np.ceil(np.log2(2 * seg.size)))
+    r = np.fft.irfft(np.abs(np.fft.rfft(seg, nfft)) ** 2, nfft)[:hi + 2]
+    # unbiased normalisation (the window overlap shrinks with the lag)
+    w = np.hanning(seg.size)
+    rw = np.fft.irfft(np.abs(np.fft.rfft(w, nfft)) ** 2, nfft)[:hi + 2]
+    if r[0] <= 0:
+        return 0.0
+    rn = (r / r[0]) / np.maximum(rw / rw[0], 1e-3)
+    band = rn[lo:hi + 1]
+    best = float(band.max())
+    if best < C.F0_MIN_CLARITY:
+        return 0.0
+    peaks = [k for k in range(1, band.size - 1)
+             if band[k] >= band[k - 1] and band[k] >= band[k + 1] and band[k] >= 0.9 * best]
+    k = (peaks[0] if peaks else int(np.argmax(band))) + lo
+    y0, y1, y2 = rn[k - 1], rn[k], rn[k + 1]
+    den = y0 - 2 * y1 + y2
+    frac = 0.5 * (y0 - y2) / den if den != 0 else 0.0
+    return float(sr / (k + float(np.clip(frac, -0.5, 0.5))))
+
+
 def analyse(x: np.ndarray, sr: float, zone_edges_ms: tuple[float, float] | list[float],
-            centroid_anchor: bool) -> Analysis:
+            centroid_anchor: bool, pitched: bool = False) -> Analysis:
     """Analyse one input, shape (channels, n) or (n,)."""
     onset = find_onset(x, sr)
     return Analysis(
@@ -93,6 +126,7 @@ def analyse(x: np.ndarray, sr: float, zone_edges_ms: tuple[float, float] | list[
         decay_s=decay_time(x, sr),
         attack_s=attack_time(x, sr),
         rms_as=rms_attack_sustain(x, onset, sr, zone_edges_ms[1]),
+        f0_hz=estimate_f0(x, sr, onset) if pitched else 0.0,
     )
 
 

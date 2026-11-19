@@ -51,6 +51,12 @@ class BandCache:
         return val
 
 
+def decay_envelope(n: int, start: int, slope_db_s: float, sr: float) -> np.ndarray:
+    """1 until `start`, then 10^(slope * (t - start) / 20) with t in seconds (slope <= 0 dB/s)."""
+    t = np.maximum(np.arange(n, dtype=np.float64) - start, 0.0) / sr
+    return 10.0 ** (min(slope_db_s, 0.0) * t / 20.0)
+
+
 def align_inputs(inputs: list[np.ndarray], specs: list[InputSpec], length: int) -> np.ndarray:
     """Steps 2-3: gain (level match + trim) and anchor shift. Returns (inputs, channels, length)."""
     n_c = inputs[0].shape[0]
@@ -65,7 +71,9 @@ def align_inputs(inputs: list[np.ndarray], specs: list[InputSpec], length: int) 
 
 def guarded_bands(aligned: np.ndarray, specs: list[InputSpec], edges_hz: list[float], sr: float,
                   order: int, guard_ms: float) -> np.ndarray:
-    """Steps 4-5: band split and onset guard. Returns (inputs, bands, channels, length)."""
+    """Steps 4-5: band split and onset guard. Returns (inputs, bands, channels, length).
+    (The decay-matching fade is applied after this, in `prepare_bands`, so it does not change
+    the cached split.)"""
     n = aligned.shape[-1]
     gl = int(round(guard_ms * sr / 1000.0))
     out = []
@@ -86,6 +94,7 @@ def bands_key(recipe: Recipe, n_channels: int) -> tuple:
 
 
 def prepare_bands(recipe: Recipe, inputs: list[np.ndarray], cache: BandCache | None = None) -> np.ndarray:
+    """Steps 2-5 plus decay matching: (inputs, bands, channels, length)."""
     key = bands_key(recipe, inputs[0].shape[0])
 
     def make() -> np.ndarray:
@@ -93,7 +102,17 @@ def prepare_bands(recipe: Recipe, inputs: list[np.ndarray], cache: BandCache | N
         return guarded_bands(aligned, recipe.inputs, recipe.band_edges_hz, recipe.sample_rate,
                              recipe.filter_order, recipe.guard_ms)
 
-    return cache.get(key, make) if cache is not None else make()
+    bands = cache.get(key, make) if cache is not None else make()
+    if not any(s.decay_slope_db_s < 0 for s in recipe.inputs):
+        return bands
+    # decay matching: the same slow fade on every band of an input (so its bands still sum to
+    # the faded input), starting decay_start samples into the input = decay_start + shift here
+    out = bands.copy()
+    for i, s in enumerate(recipe.inputs):
+        if s.decay_slope_db_s < 0:
+            out[i] *= decay_envelope(recipe.length, s.decay_start + s.shift, s.decay_slope_db_s,
+                                     recipe.sample_rate)
+    return out
 
 
 def moved_bands(recipe: Recipe, bands: np.ndarray) -> np.ndarray:

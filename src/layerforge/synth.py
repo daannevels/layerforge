@@ -74,6 +74,40 @@ def make_perc(freq: float = 400.0, decay: float = 0.08, noise_amt: float = 0.3,
     return _normalise(tone + noise_amt * noise)
 
 
+def _saw(freq: float, t: np.ndarray, sr: float, phase: float = 0.0) -> np.ndarray:
+    """Band-limited sawtooth (additive, harmonics below 0.45 sr)."""
+    out = np.zeros_like(t)
+    for k in range(1, int(0.45 * sr / freq) + 1):
+        out += np.sin(2 * np.pi * k * freq * t + k * phase) / k
+    return out
+
+
+def make_bass(freq: float = 55.0, decay: float = 0.6, drive: float = 2.0, glide: float = 0.15,
+              seed: int = 6, dur: float = 1.2, sr: int = 48000) -> np.ndarray:
+    """808-style bass note: a sine with a short downward glide into `freq` (Hz), soft-clipped
+    (adds harmonics), a 3 ms attack and an exponential decay."""
+    n = int(dur * sr)
+    t = np.arange(n) / sr
+    f = freq * (1.0 + glide * np.exp(-t / 0.02))
+    ph = 2 * np.pi * np.cumsum(f) / sr + np.random.default_rng(seed).uniform(0, 2 * np.pi)
+    env = np.minimum(t / 0.003, 1.0) * np.exp(-t / decay)
+    return _normalise(np.tanh(drive * np.sin(ph)) * env)
+
+
+def make_synth(freq: float = 220.0, detune: float = 0.006, decay: float = 0.35, seed: int = 7,
+               dur: float = 1.0, sr: int = 48000) -> np.ndarray:
+    """Synth pluck: three detuned band-limited saws through a decaying low-pass, 5 ms attack."""
+    n = int(dur * sr)
+    t = np.arange(n) / sr
+    rng = np.random.default_rng(seed)
+    x = sum(_saw(freq * (1 + d), t, sr, rng.uniform(0, 2 * np.pi)) for d in (-detune, 0.0, detune))
+    bright = signal.sosfilt(signal.butter(2, min(6000.0, 0.45 * sr), "lp", fs=sr, output="sos"), x)
+    dark = signal.sosfilt(signal.butter(2, 600.0, "lp", fs=sr, output="sos"), x)
+    mix = np.exp(-t / 0.08)
+    env = np.minimum(t / 0.005, 1.0) * np.exp(-t / decay)
+    return _normalise((mix * bright + (1 - mix) * dark) * env)
+
+
 GENERATORS = {
     "kick": make_kick,
     "clap": make_clap,
@@ -81,4 +115,6 @@ GENERATORS = {
     "openhat": lambda **kw: make_hat(decay=0.25, dur=0.8, **kw),
     "crash": make_crash,
     "perc": make_perc,
+    "bass": make_bass,
+    "synth": make_synth,
 }

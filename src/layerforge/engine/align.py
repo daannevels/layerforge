@@ -95,3 +95,30 @@ def coherence_ratio(a: np.ndarray, b: np.ndarray, start: int, win: int) -> float
     if den <= 0.0:
         return 1.0
     return _energy(aw + bw) / den
+
+
+def envelope(x: np.ndarray, win: int) -> np.ndarray:
+    """Moving RMS (centred, `win` samples) of a 1-D signal."""
+    k = np.ones(max(win, 1)) / max(win, 1)
+    return np.sqrt(np.maximum(np.convolve(x * x, k, mode="same"), 0.0))
+
+
+def best_envelope_lag(a: np.ndarray, b: np.ndarray, max_lag: int, start: int, win: int,
+                      env_win: int, min_gain: float) -> tuple[int, float]:
+    """Alignment for noise-like bands: the lag of `b` that maximises the correlation of the two
+    RMS envelopes over [start, start + win). Polarity is never flipped (it means nothing for noise).
+    Returns (lag, relative gain); (0, 0.0) unless the gain over lag 0 is at least `min_gain`."""
+    ea, eb = envelope(a, env_win), envelope(b, env_win)
+    start = max(start, 0)
+    stop = min(start + win, a.shape[-1])
+    aw = ea[start:stop]
+    c0, best = None, (-1.0, 0)
+    for k in sorted(range(-max_lag, max_lag + 1), key=lambda v: (abs(v), v < 0)):
+        c = float(np.dot(aw, window_of_shift(eb, k, start, stop)))
+        if k == 0:
+            c0 = c
+        if c > best[0]:
+            best = (c, k)
+    if not c0 or c0 <= 0 or best[0] < c0 * (1.0 + min_gain):
+        return 0, 0.0
+    return best[1], best[0] / c0 - 1.0
